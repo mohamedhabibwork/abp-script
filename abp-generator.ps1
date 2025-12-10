@@ -728,12 +728,65 @@ function Show-MainMenu {
     
     Write-Host "Select an operation:"
     Write-Host ""
+    Write-Host "PROJECT MANAGEMENT:"
     Write-Host "  1) Create New ABP Project"
-    Write-Host "  2) Add New Module"
-    Write-Host "  3) Add Entity with CRUD"
-    Write-Host "  4) Generate from JSON"
-    Write-Host "  5) Check Dependencies"
-    Write-Host "  6) Exit"
+    Write-Host "  2) Create New Module"
+    Write-Host "  3) Create New Package"
+    Write-Host "  4) Initialize Solution"
+    Write-Host "  5) Update Solution"
+    Write-Host "  6) Upgrade Solution"
+    Write-Host "  7) Clean Solution"
+    Write-Host ""
+    Write-Host "MODULE & PACKAGE MANAGEMENT:"
+    Write-Host "  8) Add Package"
+    Write-Host "  9) Add Package Reference"
+    Write-Host " 10) Install Module"
+    Write-Host " 11) Install Local Module"
+    Write-Host " 12) List Modules"
+    Write-Host " 13) List Templates"
+    Write-Host ""
+    Write-Host "SOURCE CODE MANAGEMENT:"
+    Write-Host " 14) Get Module Source"
+    Write-Host " 15) Add Source Code"
+    Write-Host " 16) List Module Sources"
+    Write-Host " 17) Add Module Source"
+    Write-Host " 18) Delete Module Source"
+    Write-Host ""
+    Write-Host "PROXY GENERATION:"
+    Write-Host " 19) Generate Proxy"
+    Write-Host " 20) Remove Proxy"
+    Write-Host ""
+    Write-Host "VERSION MANAGEMENT:"
+    Write-Host " 21) Switch to Preview"
+    Write-Host " 22) Switch to Nightly"
+    Write-Host " 23) Switch to Stable"
+    Write-Host " 24) Switch to Local"
+    Write-Host ""
+    Write-Host "ENTITY GENERATION (Custom):"
+    Write-Host " 25) Add Entity with CRUD"
+    Write-Host " 26) Generate from JSON"
+    Write-Host ""
+    Write-Host "AUTHENTICATION:"
+    Write-Host " 27) Login"
+    Write-Host " 28) Login Info"
+    Write-Host " 29) Logout"
+    Write-Host ""
+    Write-Host "BUILD & BUNDLE:"
+    Write-Host " 30) Bundle (Blazor/MAUI)"
+    Write-Host " 31) Install Libs"
+    Write-Host ""
+    Write-Host "LOCALIZATION:"
+    Write-Host " 32) Translate"
+    Write-Host ""
+    Write-Host "UTILITIES:"
+    Write-Host " 33) Check Extensions"
+    Write-Host " 34) Install Old CLI"
+    Write-Host " 35) Generate Razor Page"
+    Write-Host " 36) Check Dependencies"
+    Write-Host " 37) ABP Help"
+    Write-Host " 38) ABP CLI Info"
+    Write-Host ""
+    Write-Host " 99) Exit"
     Write-Host ""
     Write-Separator
     
@@ -875,18 +928,25 @@ function Invoke-CliMode {
     }
     
     $operation = $Args[0]
+    $remainingArgs = $Args[1..($Args.Count - 1)]
+    
+    # Parse arguments into hashtable for custom commands
+    $params = @{}
+    for ($i = 0; $i -lt $remainingArgs.Count; $i += 2) {
+        if ($i + 1 -lt $remainingArgs.Count) {
+            $key = $remainingArgs[$i] -replace '^--?', '' -replace '-', ''
+            $params[$key] = $remainingArgs[$i + 1]
+        } else {
+            $key = $remainingArgs[$i] -replace '^--?', '' -replace '-', ''
+            $params[$key] = $true
+        }
+    }
     
     switch ($operation) {
+        # Custom commands
         "create-project" {
-            $name = ""
-            $template = "app"
-            
-            for ($i = 1; $i -lt $Args.Count; $i += 2) {
-                switch ($Args[$i]) {
-                    "--name" { $name = $Args[$i + 1] }
-                    "--template" { $template = $Args[$i + 1] }
-                }
-            }
+            $name = $params["name"]
+            $template = if ($params["template"]) { $params["template"] } else { "app" }
             
             if ([string]::IsNullOrEmpty($name)) {
                 Write-Error-Custom "Project name is required (--name)"
@@ -905,26 +965,38 @@ function Invoke-CliMode {
             }
         }
         "add-entity" {
-            $jsonFile = ""
-            
-            for ($i = 1; $i -lt $Args.Count; $i += 2) {
-                switch ($Args[$i]) {
-                    "--from-json" { $jsonFile = $Args[$i + 1] }
-                    "--module" { $script:ModuleName = $Args[$i + 1] }
-                    "--name" { $script:EntityName = $Args[$i + 1] }
-                }
-            }
+            $jsonFile = $params["fromjson"]
             
             if ($jsonFile) {
                 New-EntityFromJson $jsonFile
-            } elseif ($script:ModuleName -and $script:EntityName) {
+            } elseif ($params["module"] -and $params["name"]) {
+                $script:ModuleName = $params["module"]
+                $script:EntityName = $params["name"]
                 New-EntityFiles @() @()
             } else {
                 Write-Error-Custom "Either --from-json or both --module and --name are required"
             }
         }
+        # ABP CLI commands - direct passthrough to abp CLI
         default {
-            Show-Usage
+            # Check if it's a valid ABP CLI command by trying to execute it
+            if (-not (Get-Command abp -ErrorAction SilentlyContinue)) {
+                Write-Error-Custom "ABP CLI not found. Install with: dotnet tool install -g Volo.Abp.Cli"
+                return
+            }
+            
+            # Pass through to ABP CLI directly
+            Write-Info "Executing: abp $($Args -join ' ')"
+            try {
+                & abp $Args
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Error-Custom "Command failed with exit code $LASTEXITCODE"
+                }
+            } catch {
+                Write-Error-Custom "Error executing command: $_"
+                Write-Host ""
+                Show-Usage
+            }
         }
     }
 }
@@ -934,14 +1006,1029 @@ function Show-Usage {
     Write-Host ""
     Write-Host "Usage:"
     Write-Host "  .\abp-generator.ps1                                    # Interactive mode"
-    Write-Host "  .\abp-generator.ps1 create-project -name <name> -template <type>"
-    Write-Host "  .\abp-generator.ps1 add-entity -from-json <file.json>"
-    Write-Host "  .\abp-generator.ps1 add-entity -module <module> -name <name>"
+    Write-Host ""
+    Write-Host "PROJECT MANAGEMENT:"
+    Write-Host "  .\abp-generator.ps1 create-project --name <name> --template <type>"
+    Write-Host "  .\abp-generator.ps1 new --name <name> [options]"
+    Write-Host "  .\abp-generator.ps1 new-module --name <name> [options]"
+    Write-Host "  .\abp-generator.ps1 new-package --name <name> [options]"
+    Write-Host "  .\abp-generator.ps1 init-solution --name <name> [options]"
+    Write-Host "  .\abp-generator.ps1 update [--solution-name <name>]"
+    Write-Host "  .\abp-generator.ps1 upgrade [--solution-name <name>]"
+    Write-Host "  .\abp-generator.ps1 clean [--solution-name <name>]"
+    Write-Host ""
+    Write-Host "MODULE & PACKAGE MANAGEMENT:"
+    Write-Host "  .\abp-generator.ps1 add-package --project <path> --package <name>"
+    Write-Host "  .\abp-generator.ps1 add-package-ref --project <path> --package <name>"
+    Write-Host "  .\abp-generator.ps1 install-module --solution-name <name> --module <name>"
+    Write-Host "  .\abp-generator.ps1 install-local-module --solution-name <name> --module <path>"
+    Write-Host "  .\abp-generator.ps1 list-modules"
+    Write-Host "  .\abp-generator.ps1 list-templates"
+    Write-Host ""
+    Write-Host "SOURCE CODE MANAGEMENT:"
+    Write-Host "  .\abp-generator.ps1 get-source --module <name>"
+    Write-Host "  .\abp-generator.ps1 add-source-code --solution-name <name> --module <name>"
+    Write-Host "  .\abp-generator.ps1 list-module-sources"
+    Write-Host "  .\abp-generator.ps1 add-module-source --name <name> --url <url>"
+    Write-Host "  .\abp-generator.ps1 delete-module-source --name <name>"
+    Write-Host ""
+    Write-Host "PROXY GENERATION:"
+    Write-Host "  .\abp-generator.ps1 generate-proxy [options]"
+    Write-Host "  .\abp-generator.ps1 remove-proxy [options]"
+    Write-Host ""
+    Write-Host "VERSION MANAGEMENT:"
+    Write-Host "  .\abp-generator.ps1 switch-to-preview [--solution-name <name>]"
+    Write-Host "  .\abp-generator.ps1 switch-to-nightly [--solution-name <name>]"
+    Write-Host "  .\abp-generator.ps1 switch-to-stable [--solution-name <name>]"
+    Write-Host "  .\abp-generator.ps1 switch-to-local [--solution-name <name>]"
+    Write-Host ""
+    Write-Host "ENTITY GENERATION (Custom):"
+    Write-Host "  .\abp-generator.ps1 add-entity --from-json <file.json>"
+    Write-Host "  .\abp-generator.ps1 add-entity --module <module> --name <name>"
+    Write-Host ""
+    Write-Host "AUTHENTICATION:"
+    Write-Host "  .\abp-generator.ps1 login [--username <user>] [--password <pass>]"
+    Write-Host "  .\abp-generator.ps1 login-info"
+    Write-Host "  .\abp-generator.ps1 logout"
+    Write-Host ""
+    Write-Host "BUILD & BUNDLE:"
+    Write-Host "  .\abp-generator.ps1 bundle [--working-directory <path>]"
+    Write-Host "  .\abp-generator.ps1 install-libs [--working-directory <path>]"
+    Write-Host ""
+    Write-Host "LOCALIZATION:"
+    Write-Host "  .\abp-generator.ps1 translate --culture <code> [options]"
+    Write-Host ""
+    Write-Host "UTILITIES:"
+    Write-Host "  .\abp-generator.ps1 check-extensions"
+    Write-Host "  .\abp-generator.ps1 install-old-cli [--version <version>]"
+    Write-Host "  .\abp-generator.ps1 generate-razor-page [--working-directory <path>]"
+    Write-Host "  .\abp-generator.ps1 help [<command>]"
+    Write-Host "  .\abp-generator.ps1 cli"
+    Write-Host ""
+    Write-Host "KUBERNETES:"
+    Write-Host "  .\abp-generator.ps1 kube-connect --context <name>"
+    Write-Host "  .\abp-generator.ps1 kube-intercept --service <name>"
     Write-Host ""
     Write-Host "Examples:"
-    Write-Host "  .\abp-generator.ps1 create-project -name MyApp -template app"
-    Write-Host "  .\abp-generator.ps1 add-entity -from-json product.json"
-    Write-Host "  .\abp-generator.ps1 add-entity -module Products -name Product"
+    Write-Host "  .\abp-generator.ps1 create-project --name MyApp --template app"
+    Write-Host "  .\abp-generator.ps1 new --name MyApp --template app --database-provider ef"
+    Write-Host "  .\abp-generator.ps1 add-entity --from-json product.json"
+    Write-Host "  .\abp-generator.ps1 install-module --solution-name MyApp --module Volo.Blogging"
+    Write-Host "  .\abp-generator.ps1 login"
+    Write-Host "  .\abp-generator.ps1 help new"
+}
+
+################################################################################
+# SECTION 14: ABP CLI Command Wrappers
+################################################################################
+
+function Invoke-AbpCommand {
+    param(
+        [string]$Command,
+        [hashtable]$Parameters = @{}
+    )
+    
+    if (-not (Get-Command abp -ErrorAction SilentlyContinue)) {
+        Write-Error-Custom "ABP CLI not found. Install with: dotnet tool install -g Volo.Abp.Cli"
+        return $false
+    }
+    
+    $args = @($Command)
+    
+    foreach ($key in $Parameters.Keys) {
+        $value = $Parameters[$key]
+        if ($value -is [bool]) {
+            if ($value) {
+                $args += "--$key"
+            }
+        } elseif ($value -is [array]) {
+            foreach ($item in $value) {
+                $args += "--$key"
+                $args += $item
+            }
+        } elseif ($null -ne $value -and $value -ne "") {
+            $args += "--$key"
+            $args += $value
+        }
+    }
+    
+    Write-Info "Executing: abp $($args -join ' ')"
+    
+    try {
+        & abp $args
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Command completed successfully"
+            return $true
+        } else {
+            Write-Error-Custom "Command failed with exit code $LASTEXITCODE"
+            return $false
+        }
+    } catch {
+        Write-Error-Custom "Error executing command: $_"
+        return $false
+    }
+}
+
+# Project & Solution Commands
+function Invoke-AbpNew {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name,
+        [string]$Template = "app",
+        [string]$DatabaseProvider = "ef",
+        [string]$UiFramework = "",
+        [string]$Mobile = "",
+        [switch]$Tiered,
+        [switch]$SeparateIdentityServer,
+        [switch]$PublicWebSite,
+        [switch]$NoUi,
+        [string]$OutputFolder = "",
+        [string]$Version = ""
+    )
+    
+    $params = @{
+        name = $Name
+        template = $Template
+        database-provider = $DatabaseProvider
+    }
+    
+    if ($UiFramework) { $params["ui"] = $UiFramework }
+    if ($Mobile) { $params["mobile"] = $Mobile }
+    if ($Tiered) { $params["tiered"] = $true }
+    if ($SeparateIdentityServer) { $params["separate-identity-server"] = $true }
+    if ($PublicWebSite) { $params["public-website"] = $true }
+    if ($NoUi) { $params["no-ui"] = $true }
+    if ($OutputFolder) { $params["output-folder"] = $OutputFolder }
+    if ($Version) { $params["version"] = $Version }
+    
+    Invoke-AbpCommand "new" $params
+}
+
+function Invoke-AbpNewModule {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name,
+        [string]$Template = "module",
+        [string]$DatabaseProvider = "ef",
+        [string]$OutputFolder = "",
+        [string]$Version = ""
+    )
+    
+    $params = @{
+        name = $Name
+        template = $Template
+        database-provider = $DatabaseProvider
+    }
+    
+    if ($OutputFolder) { $params["output-folder"] = $OutputFolder }
+    if ($Version) { $params["version"] = $Version }
+    
+    Invoke-AbpCommand "new-module" $params
+}
+
+function Invoke-AbpNewPackage {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name,
+        [string]$Template = "package",
+        [string]$OutputFolder = "",
+        [string]$Version = ""
+    )
+    
+    $params = @{
+        name = $Name
+        template = $Template
+    }
+    
+    if ($OutputFolder) { $params["output-folder"] = $OutputFolder }
+    if ($Version) { $params["version"] = $Version }
+    
+    Invoke-AbpCommand "new-package" $params
+}
+
+function Invoke-AbpInitSolution {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name,
+        [string]$Template = "app",
+        [string]$DatabaseProvider = "ef",
+        [string]$UiFramework = "",
+        [switch]$Tiered,
+        [string]$OutputFolder = "",
+        [string]$Version = ""
+    )
+    
+    $params = @{
+        name = $Name
+        template = $Template
+        database-provider = $DatabaseProvider
+    }
+    
+    if ($UiFramework) { $params["ui"] = $UiFramework }
+    if ($Tiered) { $params["tiered"] = $true }
+    if ($OutputFolder) { $params["output-folder"] = $OutputFolder }
+    if ($Version) { $params["version"] = $Version }
+    
+    Invoke-AbpCommand "init-solution" $params
+}
+
+function Invoke-AbpUpdate {
+    param(
+        [string]$SolutionName = "",
+        [switch]$NoBuild,
+        [switch]$SkipCache
+    )
+    
+    $params = @{}
+    
+    if ($SolutionName) { $params["solution-name"] = $SolutionName }
+    if ($NoBuild) { $params["no-build"] = $true }
+    if ($SkipCache) { $params["skip-cache"] = $true }
+    
+    Invoke-AbpCommand "update" $params
+}
+
+function Invoke-AbpUpgrade {
+    param(
+        [string]$SolutionName = "",
+        [switch]$Check,
+        [switch]$Pre
+    )
+    
+    $params = @{}
+    
+    if ($SolutionName) { $params["solution-name"] = $SolutionName }
+    if ($Check) { $params["check"] = $true }
+    if ($Pre) { $params["pre"] = $true }
+    
+    Invoke-AbpCommand "upgrade" $params
+}
+
+function Invoke-AbpClean {
+    param(
+        [string]$SolutionName = ""
+    )
+    
+    $params = @{}
+    
+    if ($SolutionName) { $params["solution-name"] = $SolutionName }
+    
+    Invoke-AbpCommand "clean" $params
+}
+
+# Package & Module Management
+function Invoke-AbpAddPackage {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Project,
+        [Parameter(Mandatory=$true)]
+        [string]$PackageName,
+        [string]$Version = "",
+        [switch]$WithSourceCode,
+        [string]$WorkingDirectory = ""
+    )
+    
+    $params = @{
+        project = $Project
+        package = $PackageName
+    }
+    
+    if ($Version) { $params["version"] = $Version }
+    if ($WithSourceCode) { $params["with-source-code"] = $true }
+    if ($WorkingDirectory) { $params["working-directory"] = $WorkingDirectory }
+    
+    Invoke-AbpCommand "add-package" $params
+}
+
+function Invoke-AbpAddPackageRef {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Project,
+        [Parameter(Mandatory=$true)]
+        [string]$PackageName,
+        [string]$Version = "",
+        [string]$WorkingDirectory = ""
+    )
+    
+    $params = @{
+        project = $Project
+        package = $PackageName
+    }
+    
+    if ($Version) { $params["version"] = $Version }
+    if ($WorkingDirectory) { $params["working-directory"] = $WorkingDirectory }
+    
+    Invoke-AbpCommand "add-package-ref" $params
+}
+
+function Invoke-AbpInstallModule {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$SolutionName,
+        [Parameter(Mandatory=$true)]
+        [string]$ModuleName,
+        [string]$Version = "",
+        [switch]$SkipDbMigrations,
+        [string]$WorkingDirectory = ""
+    )
+    
+    $params = @{
+        solution-name = $SolutionName
+        module = $ModuleName
+    }
+    
+    if ($Version) { $params["version"] = $Version }
+    if ($SkipDbMigrations) { $params["skip-db-migrations"] = $true }
+    if ($WorkingDirectory) { $params["working-directory"] = $WorkingDirectory }
+    
+    Invoke-AbpCommand "install-module" $params
+}
+
+function Invoke-AbpInstallLocalModule {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$SolutionName,
+        [Parameter(Mandatory=$true)]
+        [string]$ModulePath,
+        [switch]$SkipDbMigrations,
+        [string]$WorkingDirectory = ""
+    )
+    
+    $params = @{
+        solution-name = $SolutionName
+        module = $ModulePath
+    }
+    
+    if ($SkipDbMigrations) { $params["skip-db-migrations"] = $true }
+    if ($WorkingDirectory) { $params["working-directory"] = $WorkingDirectory }
+    
+    Invoke-AbpCommand "install-local-module" $params
+}
+
+function Invoke-AbpListModules {
+    param(
+        [switch]$IncludePreRelease
+    )
+    
+    $params = @{}
+    
+    if ($IncludePreRelease) { $params["include-prerelease"] = $true }
+    
+    Invoke-AbpCommand "list-modules" $params
+}
+
+function Invoke-AbpListTemplates {
+    Invoke-AbpCommand "list-templates" @{}
+}
+
+# Source Code Management
+function Invoke-AbpGetSource {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$ModuleName,
+        [string]$Version = "",
+        [string]$OutputFolder = ""
+    )
+    
+    $params = @{
+        module = $ModuleName
+    }
+    
+    if ($Version) { $params["version"] = $Version }
+    if ($OutputFolder) { $params["output-folder"] = $OutputFolder }
+    
+    Invoke-AbpCommand "get-source" $params
+}
+
+function Invoke-AbpAddSourceCode {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$SolutionName,
+        [Parameter(Mandatory=$true)]
+        [string]$ModuleName,
+        [string]$Version = "",
+        [string]$WorkingDirectory = ""
+    )
+    
+    $params = @{
+        solution-name = $SolutionName
+        module = $ModuleName
+    }
+    
+    if ($Version) { $params["version"] = $Version }
+    if ($WorkingDirectory) { $params["working-directory"] = $WorkingDirectory }
+    
+    Invoke-AbpCommand "add-source-code" $params
+}
+
+function Invoke-AbpListModuleSources {
+    Invoke-AbpCommand "list-module-sources" @{}
+}
+
+function Invoke-AbpAddModuleSource {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name,
+        [Parameter(Mandatory=$true)]
+        [string]$Url
+    )
+    
+    $params = @{
+        name = $Name
+        url = $Url
+    }
+    
+    Invoke-AbpCommand "add-module-source" $params
+}
+
+function Invoke-AbpDeleteModuleSource {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name
+    )
+    
+    $params = @{
+        name = $Name
+    }
+    
+    Invoke-AbpCommand "delete-module-source" $params
+}
+
+# Proxy Generation
+function Invoke-AbpGenerateProxy {
+    param(
+        [string]$Module = "",
+        [string]$Output = "",
+        [string]$ApiName = "",
+        [string]$Target = "",
+        [string]$WorkingDirectory = "",
+        [switch]$Angular,
+        [switch]$ReactNative
+    )
+    
+    $params = @{}
+    
+    if ($Module) { $params["module"] = $Module }
+    if ($Output) { $params["output"] = $Output }
+    if ($ApiName) { $params["api-name"] = $ApiName }
+    if ($Target) { $params["target"] = $Target }
+    if ($WorkingDirectory) { $params["working-directory"] = $WorkingDirectory }
+    if ($Angular) { $params["angular"] = $true }
+    if ($ReactNative) { $params["react-native"] = $true }
+    
+    Invoke-AbpCommand "generate-proxy" $params
+}
+
+function Invoke-AbpRemoveProxy {
+    param(
+        [string]$Module = "",
+        [string]$ApiName = "",
+        [string]$WorkingDirectory = ""
+    )
+    
+    $params = @{}
+    
+    if ($Module) { $params["module"] = $Module }
+    if ($ApiName) { $params["api-name"] = $ApiName }
+    if ($WorkingDirectory) { $params["working-directory"] = $WorkingDirectory }
+    
+    Invoke-AbpCommand "remove-proxy" $params
+}
+
+# Version Management
+function Invoke-AbpSwitchToPreview {
+    param(
+        [string]$SolutionName = ""
+    )
+    
+    $params = @{}
+    
+    if ($SolutionName) { $params["solution-name"] = $SolutionName }
+    
+    Invoke-AbpCommand "switch-to-preview" $params
+}
+
+function Invoke-AbpSwitchToNightly {
+    param(
+        [string]$SolutionName = ""
+    )
+    
+    $params = @{}
+    
+    if ($SolutionName) { $params["solution-name"] = $SolutionName }
+    
+    Invoke-AbpCommand "switch-to-nightly" $params
+}
+
+function Invoke-AbpSwitchToStable {
+    param(
+        [string]$SolutionName = ""
+    )
+    
+    $params = @{}
+    
+    if ($SolutionName) { $params["solution-name"] = $SolutionName }
+    
+    Invoke-AbpCommand "switch-to-stable" $params
+}
+
+function Invoke-AbpSwitchToLocal {
+    param(
+        [string]$SolutionName = ""
+    )
+    
+    $params = @{}
+    
+    if ($SolutionName) { $params["solution-name"] = $SolutionName }
+    
+    Invoke-AbpCommand "switch-to-local" $params
+}
+
+# Localization
+function Invoke-AbpTranslate {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Culture,
+        [string]$Output = "",
+        [switch]$All,
+        [string]$WorkingDirectory = ""
+    )
+    
+    $params = @{
+        culture = $Culture
+    }
+    
+    if ($Output) { $params["output"] = $Output }
+    if ($All) { $params["all"] = $true }
+    if ($WorkingDirectory) { $params["working-directory"] = $WorkingDirectory }
+    
+    Invoke-AbpCommand "translate" $params
+}
+
+# Authentication
+function Invoke-AbpLogin {
+    param(
+        [string]$Username = "",
+        [string]$Password = ""
+    )
+    
+    $params = @{}
+    
+    if ($Username) { $params["username"] = $Username }
+    if ($Password) { $params["password"] = $Password }
+    
+    Invoke-AbpCommand "login" $params
+}
+
+function Invoke-AbpLoginInfo {
+    Invoke-AbpCommand "login-info" @{}
+}
+
+function Invoke-AbpLogout {
+    Invoke-AbpCommand "logout" @{}
+}
+
+# Build & Bundle
+function Invoke-AbpBundle {
+    param(
+        [string]$WorkingDirectory = "",
+        [switch]$Force,
+        [string]$ProjectType = "webassembly",
+        [string]$Version = ""
+    )
+    
+    $params = @{}
+    
+    if ($WorkingDirectory) { $params["working-directory"] = $WorkingDirectory }
+    if ($Force) { $params["force"] = $true }
+    if ($ProjectType) { $params["project-type"] = $ProjectType }
+    if ($Version) { $params["version"] = $Version }
+    
+    Invoke-AbpCommand "bundle" $params
+}
+
+function Invoke-AbpInstallLibs {
+    param(
+        [string]$WorkingDirectory = ""
+    )
+    
+    $params = @{}
+    
+    if ($WorkingDirectory) { $params["working-directory"] = $WorkingDirectory }
+    
+    Invoke-AbpCommand "install-libs" $params
+}
+
+# Utilities
+function Invoke-AbpCheckExtensions {
+    Invoke-AbpCommand "check-extensions" @{}
+}
+
+function Invoke-AbpInstallOldCli {
+    param(
+        [string]$Version = ""
+    )
+    
+    $params = @{}
+    
+    if ($Version) { $params["version"] = $Version }
+    
+    Invoke-AbpCommand "install-old-cli" $params
+}
+
+function Invoke-AbpGenerateRazorPage {
+    param(
+        [string]$WorkingDirectory = ""
+    )
+    
+    $params = @{}
+    
+    if ($WorkingDirectory) { $params["working-directory"] = $WorkingDirectory }
+    
+    Invoke-AbpCommand "generate-razor-page" $params
+}
+
+# Kubernetes
+function Invoke-AbpKubeConnect {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Context,
+        [string]$Namespace = ""
+    )
+    
+    $params = @{
+        context = $Context
+    }
+    
+    if ($Namespace) { $params["namespace"] = $Namespace }
+    
+    Invoke-AbpCommand "kube-connect" $params
+}
+
+function Invoke-AbpKubeIntercept {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Service,
+        [string]$Context = "",
+        [string]$Namespace = "",
+        [string]$Port = ""
+    )
+    
+    $params = @{
+        service = $Service
+    }
+    
+    if ($Context) { $params["context"] = $Context }
+    if ($Namespace) { $params["namespace"] = $Namespace }
+    if ($Port) { $params["port"] = $Port }
+    
+    Invoke-AbpCommand "kube-intercept" $params
+}
+
+# Help & Info
+function Invoke-AbpHelp {
+    param(
+        [string]$Command = ""
+    )
+    
+    if ($Command) {
+        & abp help $Command
+    } else {
+        & abp help
+    }
+}
+
+function Invoke-AbpCli {
+    param(
+        [switch]$Version
+    )
+    
+    if ($Version) {
+        & abp cli --version
+    } else {
+        & abp cli
+    }
+}
+
+################################################################################
+# SECTION 15: Interactive Command Wrappers
+################################################################################
+
+function Invoke-NewModuleInteractive {
+    Write-Header "Create New Module"
+    $name = Read-Host "Enter module name"
+    if ([string]::IsNullOrEmpty($name)) {
+        Write-Error-Custom "Module name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $template = Read-Host "Enter template [module] (default: module)"
+    if ([string]::IsNullOrEmpty($template)) { $template = "module" }
+    $dbProvider = Read-Host "Enter database provider [ef/mongodb] (default: ef)"
+    if ([string]::IsNullOrEmpty($dbProvider)) { $dbProvider = "ef" }
+    Invoke-AbpNewModule -Name $name -Template $template -DatabaseProvider $dbProvider
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-NewPackageInteractive {
+    Write-Header "Create New Package"
+    $name = Read-Host "Enter package name"
+    if ([string]::IsNullOrEmpty($name)) {
+        Write-Error-Custom "Package name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $template = Read-Host "Enter template [package] (default: package)"
+    if ([string]::IsNullOrEmpty($template)) { $template = "package" }
+    Invoke-AbpNewPackage -Name $name -Template $template
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-InitSolutionInteractive {
+    Write-Header "Initialize Solution"
+    $name = Read-Host "Enter solution name"
+    if ([string]::IsNullOrEmpty($name)) {
+        Write-Error-Custom "Solution name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $template = Read-Host "Enter template [app] (default: app)"
+    if ([string]::IsNullOrEmpty($template)) { $template = "app" }
+    $dbProvider = Read-Host "Enter database provider [ef/mongodb] (default: ef)"
+    if ([string]::IsNullOrEmpty($dbProvider)) { $dbProvider = "ef" }
+    Invoke-AbpInitSolution -Name $name -Template $template -DatabaseProvider $dbProvider
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-UpdateInteractive {
+    Write-Header "Update Solution"
+    $solutionName = Read-Host "Enter solution name (optional)"
+    $noBuild = (Read-Host "Skip build? [y/N]") -match '^[Yy]$'
+    Invoke-AbpUpdate -SolutionName $solutionName -NoBuild:$noBuild
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-UpgradeInteractive {
+    Write-Header "Upgrade Solution"
+    $solutionName = Read-Host "Enter solution name (optional)"
+    $check = (Read-Host "Check only? [y/N]") -match '^[Yy]$'
+    Invoke-AbpUpgrade -SolutionName $solutionName -Check:$check
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-CleanInteractive {
+    Write-Header "Clean Solution"
+    $solutionName = Read-Host "Enter solution name (optional)"
+    Invoke-AbpClean -SolutionName $solutionName
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-AddPackageInteractive {
+    Write-Header "Add Package"
+    $project = Read-Host "Enter project path"
+    if ([string]::IsNullOrEmpty($project)) {
+        Write-Error-Custom "Project path is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $packageName = Read-Host "Enter package name"
+    if ([string]::IsNullOrEmpty($packageName)) {
+        Write-Error-Custom "Package name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $version = Read-Host "Enter version (optional)"
+    $withSourceCode = (Read-Host "Include source code? [y/N]") -match '^[Yy]$'
+    Invoke-AbpAddPackage -Project $project -PackageName $packageName -Version $version -WithSourceCode:$withSourceCode
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-AddPackageRefInteractive {
+    Write-Header "Add Package Reference"
+    $project = Read-Host "Enter project path"
+    if ([string]::IsNullOrEmpty($project)) {
+        Write-Error-Custom "Project path is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $packageName = Read-Host "Enter package name"
+    if ([string]::IsNullOrEmpty($packageName)) {
+        Write-Error-Custom "Package name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $version = Read-Host "Enter version (optional)"
+    Invoke-AbpAddPackageRef -Project $project -PackageName $packageName -Version $version
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-InstallModuleInteractive {
+    Write-Header "Install Module"
+    $solutionName = Read-Host "Enter solution name"
+    if ([string]::IsNullOrEmpty($solutionName)) {
+        Write-Error-Custom "Solution name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $moduleName = Read-Host "Enter module name"
+    if ([string]::IsNullOrEmpty($moduleName)) {
+        Write-Error-Custom "Module name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $version = Read-Host "Enter version (optional)"
+    $skipDbMigrations = (Read-Host "Skip DB migrations? [y/N]") -match '^[Yy]$'
+    Invoke-AbpInstallModule -SolutionName $solutionName -ModuleName $moduleName -Version $version -SkipDbMigrations:$skipDbMigrations
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-InstallLocalModuleInteractive {
+    Write-Header "Install Local Module"
+    $solutionName = Read-Host "Enter solution name"
+    if ([string]::IsNullOrEmpty($solutionName)) {
+        Write-Error-Custom "Solution name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $modulePath = Read-Host "Enter module path"
+    if ([string]::IsNullOrEmpty($modulePath)) {
+        Write-Error-Custom "Module path is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $skipDbMigrations = (Read-Host "Skip DB migrations? [y/N]") -match '^[Yy]$'
+    Invoke-AbpInstallLocalModule -SolutionName $solutionName -ModulePath $modulePath -SkipDbMigrations:$skipDbMigrations
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-GetSourceInteractive {
+    Write-Header "Get Module Source"
+    $moduleName = Read-Host "Enter module name"
+    if ([string]::IsNullOrEmpty($moduleName)) {
+        Write-Error-Custom "Module name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $version = Read-Host "Enter version (optional)"
+    $outputFolder = Read-Host "Enter output folder (optional)"
+    Invoke-AbpGetSource -ModuleName $moduleName -Version $version -OutputFolder $outputFolder
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-AddSourceCodeInteractive {
+    Write-Header "Add Source Code"
+    $solutionName = Read-Host "Enter solution name"
+    if ([string]::IsNullOrEmpty($solutionName)) {
+        Write-Error-Custom "Solution name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $moduleName = Read-Host "Enter module name"
+    if ([string]::IsNullOrEmpty($moduleName)) {
+        Write-Error-Custom "Module name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $version = Read-Host "Enter version (optional)"
+    Invoke-AbpAddSourceCode -SolutionName $solutionName -ModuleName $moduleName -Version $version
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-AddModuleSourceInteractive {
+    Write-Header "Add Module Source"
+    $name = Read-Host "Enter source name"
+    if ([string]::IsNullOrEmpty($name)) {
+        Write-Error-Custom "Source name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $url = Read-Host "Enter source URL"
+    if ([string]::IsNullOrEmpty($url)) {
+        Write-Error-Custom "Source URL is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    Invoke-AbpAddModuleSource -Name $name -Url $url
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-DeleteModuleSourceInteractive {
+    Write-Header "Delete Module Source"
+    $name = Read-Host "Enter source name"
+    if ([string]::IsNullOrEmpty($name)) {
+        Write-Error-Custom "Source name is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    Invoke-AbpDeleteModuleSource -Name $name
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-GenerateProxyInteractive {
+    Write-Header "Generate Proxy"
+    $module = Read-Host "Enter module name (optional)"
+    $output = Read-Host "Enter output path (optional)"
+    $apiName = Read-Host "Enter API name (optional)"
+    $target = Read-Host "Enter target [angular/react-native] (optional)"
+    $angular = (Read-Host "Angular? [y/N]") -match '^[Yy]$'
+    $reactNative = (Read-Host "React Native? [y/N]") -match '^[Yy]$'
+    Invoke-AbpGenerateProxy -Module $module -Output $output -ApiName $apiName -Target $target -Angular:$angular -ReactNative:$reactNative
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-RemoveProxyInteractive {
+    Write-Header "Remove Proxy"
+    $module = Read-Host "Enter module name (optional)"
+    $apiName = Read-Host "Enter API name (optional)"
+    Invoke-AbpRemoveProxy -Module $module -ApiName $apiName
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-SwitchToPreviewInteractive {
+    Write-Header "Switch to Preview"
+    $solutionName = Read-Host "Enter solution name (optional)"
+    Invoke-AbpSwitchToPreview -SolutionName $solutionName
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-SwitchToNightlyInteractive {
+    Write-Header "Switch to Nightly"
+    $solutionName = Read-Host "Enter solution name (optional)"
+    Invoke-AbpSwitchToNightly -SolutionName $solutionName
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-SwitchToStableInteractive {
+    Write-Header "Switch to Stable"
+    $solutionName = Read-Host "Enter solution name (optional)"
+    Invoke-AbpSwitchToStable -SolutionName $solutionName
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-SwitchToLocalInteractive {
+    Write-Header "Switch to Local"
+    $solutionName = Read-Host "Enter solution name (optional)"
+    Invoke-AbpSwitchToLocal -SolutionName $solutionName
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-LoginInteractive {
+    Write-Header "Login"
+    $username = Read-Host "Enter username (optional, will prompt if not provided)"
+    $password = Read-Host "Enter password (optional, will prompt if not provided)" -AsSecureString
+    if ($password) {
+        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)
+        $plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+        Invoke-AbpLogin -Username $username -Password $plainPassword
+    } else {
+        Invoke-AbpLogin -Username $username
+    }
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-BundleInteractive {
+    Write-Header "Bundle (Blazor/MAUI)"
+    $workingDirectory = Read-Host "Enter working directory (optional)"
+    $force = (Read-Host "Force rebuild? [y/N]") -match '^[Yy]$'
+    $projectType = Read-Host "Enter project type [webassembly/maui-blazor] (default: webassembly)"
+    if ([string]::IsNullOrEmpty($projectType)) { $projectType = "webassembly" }
+    Invoke-AbpBundle -WorkingDirectory $workingDirectory -Force:$force -ProjectType $projectType
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-InstallLibsInteractive {
+    Write-Header "Install Libs"
+    $workingDirectory = Read-Host "Enter working directory (optional)"
+    Invoke-AbpInstallLibs -WorkingDirectory $workingDirectory
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-TranslateInteractive {
+    Write-Header "Translate"
+    $culture = Read-Host "Enter culture code (e.g., en, tr, fr)"
+    if ([string]::IsNullOrEmpty($culture)) {
+        Write-Error-Custom "Culture code is required"
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    $output = Read-Host "Enter output path (optional)"
+    $all = (Read-Host "Translate all? [y/N]") -match '^[Yy]$'
+    Invoke-AbpTranslate -Culture $culture -Output $output -All:$all
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-InstallOldCliInteractive {
+    Write-Header "Install Old CLI"
+    $version = Read-Host "Enter version (optional, latest if not specified)"
+    Invoke-AbpInstallOldCli -Version $version
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-GenerateRazorPageInteractive {
+    Write-Header "Generate Razor Page"
+    $workingDirectory = Read-Host "Enter working directory (optional)"
+    Invoke-AbpGenerateRazorPage -WorkingDirectory $workingDirectory
+    Read-Host "Press Enter to continue..."
 }
 
 ################################################################################
@@ -962,21 +2049,51 @@ function Main {
     # Interactive mode
     while ($true) {
         Show-MainMenu
-        $choice = Read-Host "Enter your choice [1-6]"
+        $choice = Read-Host "Enter your choice"
         
         switch ($choice) {
             "1" { Invoke-CreateNewProject }
-            "2" { 
-                Write-Warning-Custom "Module generation coming soon"
-                Read-Host "Press Enter..."
-            }
-            "3" { Invoke-AddEntityWithCrud }
-            "4" { Invoke-GenerateFromJson }
-            "5" { 
+            "2" { Invoke-NewModuleInteractive }
+            "3" { Invoke-NewPackageInteractive }
+            "4" { Invoke-InitSolutionInteractive }
+            "5" { Invoke-UpdateInteractive }
+            "6" { Invoke-UpgradeInteractive }
+            "7" { Invoke-CleanInteractive }
+            "8" { Invoke-AddPackageInteractive }
+            "9" { Invoke-AddPackageRefInteractive }
+            "10" { Invoke-InstallModuleInteractive }
+            "11" { Invoke-InstallLocalModuleInteractive }
+            "12" { Invoke-AbpListModules; Read-Host "Press Enter to continue..." }
+            "13" { Invoke-AbpListTemplates; Read-Host "Press Enter to continue..." }
+            "14" { Invoke-GetSourceInteractive }
+            "15" { Invoke-AddSourceCodeInteractive }
+            "16" { Invoke-AbpListModuleSources; Read-Host "Press Enter to continue..." }
+            "17" { Invoke-AddModuleSourceInteractive }
+            "18" { Invoke-DeleteModuleSourceInteractive }
+            "19" { Invoke-GenerateProxyInteractive }
+            "20" { Invoke-RemoveProxyInteractive }
+            "21" { Invoke-SwitchToPreviewInteractive }
+            "22" { Invoke-SwitchToNightlyInteractive }
+            "23" { Invoke-SwitchToStableInteractive }
+            "24" { Invoke-SwitchToLocalInteractive }
+            "25" { Invoke-AddEntityWithCrud }
+            "26" { Invoke-GenerateFromJson }
+            "27" { Invoke-LoginInteractive }
+            "28" { Invoke-AbpLoginInfo; Read-Host "Press Enter to continue..." }
+            "29" { Invoke-AbpLogout; Read-Host "Press Enter to continue..." }
+            "30" { Invoke-BundleInteractive }
+            "31" { Invoke-InstallLibsInteractive }
+            "32" { Invoke-TranslateInteractive }
+            "33" { Invoke-AbpCheckExtensions; Read-Host "Press Enter to continue..." }
+            "34" { Invoke-InstallOldCliInteractive }
+            "35" { Invoke-GenerateRazorPageInteractive }
+            "36" { 
                 Test-Dependencies | Out-Null
                 Read-Host "Press Enter to continue..."
             }
-            "6" {
+            "37" { Invoke-AbpHelp; Read-Host "Press Enter to continue..." }
+            "38" { Invoke-AbpCli; Read-Host "Press Enter to continue..." }
+            "99" {
                 Write-Host ""
                 Write-Info "Exiting... Goodbye!"
                 return

@@ -979,12 +979,65 @@ show_main_menu() {
     
     echo "Select an operation:"
     echo ""
+    echo "PROJECT MANAGEMENT:"
     echo "  1) Create New ABP Project"
-    echo "  2) Add New Module"
-    echo "  3) Add Entity with CRUD"
-    echo "  4) Generate from JSON"
-    echo "  5) Check Dependencies"
-    echo "  6) Exit"
+    echo "  2) Create New Module"
+    echo "  3) Create New Package"
+    echo "  4) Initialize Solution"
+    echo "  5) Update Solution"
+    echo "  6) Upgrade Solution"
+    echo "  7) Clean Solution"
+    echo ""
+    echo "MODULE & PACKAGE MANAGEMENT:"
+    echo "  8) Add Package"
+    echo "  9) Add Package Reference"
+    echo " 10) Install Module"
+    echo " 11) Install Local Module"
+    echo " 12) List Modules"
+    echo " 13) List Templates"
+    echo ""
+    echo "SOURCE CODE MANAGEMENT:"
+    echo " 14) Get Module Source"
+    echo " 15) Add Source Code"
+    echo " 16) List Module Sources"
+    echo " 17) Add Module Source"
+    echo " 18) Delete Module Source"
+    echo ""
+    echo "PROXY GENERATION:"
+    echo " 19) Generate Proxy"
+    echo " 20) Remove Proxy"
+    echo ""
+    echo "VERSION MANAGEMENT:"
+    echo " 21) Switch to Preview"
+    echo " 22) Switch to Nightly"
+    echo " 23) Switch to Stable"
+    echo " 24) Switch to Local"
+    echo ""
+    echo "ENTITY GENERATION (Custom):"
+    echo " 25) Add Entity with CRUD"
+    echo " 26) Generate from JSON"
+    echo ""
+    echo "AUTHENTICATION:"
+    echo " 27) Login"
+    echo " 28) Login Info"
+    echo " 29) Logout"
+    echo ""
+    echo "BUILD & BUNDLE:"
+    echo " 30) Bundle (Blazor/MAUI)"
+    echo " 31) Install Libs"
+    echo ""
+    echo "LOCALIZATION:"
+    echo " 32) Translate"
+    echo ""
+    echo "UTILITIES:"
+    echo " 33) Check Extensions"
+    echo " 34) Install Old CLI"
+    echo " 35) Generate Razor Page"
+    echo " 36) Check Dependencies"
+    echo " 37) ABP Help"
+    echo " 38) ABP CLI Info"
+    echo ""
+    echo " 99) Exit"
     echo ""
     print_separator
     
@@ -997,7 +1050,7 @@ show_main_menu() {
 
 read_menu_choice() {
     local choice
-    read -p "Enter your choice [1-6]: " choice
+    read -p "Enter your choice: " choice
     echo "$choice"
 }
 
@@ -1178,8 +1231,21 @@ parse_cli_args() {
             generate_entity_from_json "$1"
             ;;
         *)
-            show_usage
-            exit 1
+            # Pass through to ABP CLI directly
+            if ! command -v abp &> /dev/null; then
+                log_error "ABP CLI not found. Install with: dotnet tool install -g Volo.Abp.Cli"
+                exit 1
+            fi
+            
+            log_info "Executing: abp $operation $*"
+            if abp "$operation" "$@"; then
+                log_success "Command completed successfully"
+            else
+                log_error "Command failed with exit code $?"
+                echo ""
+                show_usage
+                exit 1
+            fi
             ;;
     esac
 }
@@ -1259,14 +1325,774 @@ show_usage() {
     echo ""
     echo "Usage:"
     echo "  ./abp-generator.sh                                    # Interactive mode"
+    echo ""
+    echo "PROJECT MANAGEMENT:"
     echo "  ./abp-generator.sh create-project --name <name> --template <type>"
+    echo "  ./abp-generator.sh new --name <name> [options]"
+    echo "  ./abp-generator.sh new-module --name <name> [options]"
+    echo "  ./abp-generator.sh new-package --name <name> [options]"
+    echo "  ./abp-generator.sh init-solution --name <name> [options]"
+    echo "  ./abp-generator.sh update [--solution-name <name>]"
+    echo "  ./abp-generator.sh upgrade [--solution-name <name>]"
+    echo "  ./abp-generator.sh clean [--solution-name <name>]"
+    echo ""
+    echo "MODULE & PACKAGE MANAGEMENT:"
+    echo "  ./abp-generator.sh add-package --project <path> --package <name>"
+    echo "  ./abp-generator.sh add-package-ref --project <path> --package <name>"
+    echo "  ./abp-generator.sh install-module --solution-name <name> --module <name>"
+    echo "  ./abp-generator.sh install-local-module --solution-name <name> --module <path>"
+    echo "  ./abp-generator.sh list-modules"
+    echo "  ./abp-generator.sh list-templates"
+    echo ""
+    echo "SOURCE CODE MANAGEMENT:"
+    echo "  ./abp-generator.sh get-source --module <name>"
+    echo "  ./abp-generator.sh add-source-code --solution-name <name> --module <name>"
+    echo "  ./abp-generator.sh list-module-sources"
+    echo "  ./abp-generator.sh add-module-source --name <name> --url <url>"
+    echo "  ./abp-generator.sh delete-module-source --name <name>"
+    echo ""
+    echo "PROXY GENERATION:"
+    echo "  ./abp-generator.sh generate-proxy [options]"
+    echo "  ./abp-generator.sh remove-proxy [options]"
+    echo ""
+    echo "VERSION MANAGEMENT:"
+    echo "  ./abp-generator.sh switch-to-preview [--solution-name <name>]"
+    echo "  ./abp-generator.sh switch-to-nightly [--solution-name <name>]"
+    echo "  ./abp-generator.sh switch-to-stable [--solution-name <name>]"
+    echo "  ./abp-generator.sh switch-to-local [--solution-name <name>]"
+    echo ""
+    echo "ENTITY GENERATION (Custom):"
     echo "  ./abp-generator.sh add-entity --from-json <file.json>"
     echo "  ./abp-generator.sh add-entity --module <module> --name <name>"
     echo ""
+    echo "AUTHENTICATION:"
+    echo "  ./abp-generator.sh login [--username <user>] [--password <pass>]"
+    echo "  ./abp-generator.sh login-info"
+    echo "  ./abp-generator.sh logout"
+    echo ""
+    echo "BUILD & BUNDLE:"
+    echo "  ./abp-generator.sh bundle [--working-directory <path>]"
+    echo "  ./abp-generator.sh install-libs [--working-directory <path>]"
+    echo ""
+    echo "LOCALIZATION:"
+    echo "  ./abp-generator.sh translate --culture <code> [options]"
+    echo ""
+    echo "UTILITIES:"
+    echo "  ./abp-generator.sh check-extensions"
+    echo "  ./abp-generator.sh install-old-cli [--version <version>]"
+    echo "  ./abp-generator.sh generate-razor-page [--working-directory <path>]"
+    echo "  ./abp-generator.sh help [<command>]"
+    echo "  ./abp-generator.sh cli"
+    echo ""
+    echo "KUBERNETES:"
+    echo "  ./abp-generator.sh kube-connect --context <name>"
+    echo "  ./abp-generator.sh kube-intercept --service <name>"
+    echo ""
     echo "Examples:"
     echo "  ./abp-generator.sh create-project --name MyApp --template app"
+    echo "  ./abp-generator.sh new --name MyApp --template app --database-provider ef"
     echo "  ./abp-generator.sh add-entity --from-json product.json"
-    echo "  ./abp-generator.sh add-entity --module Products --name Product"
+    echo "  ./abp-generator.sh install-module --solution-name MyApp --module Volo.Blogging"
+    echo "  ./abp-generator.sh login"
+    echo "  ./abp-generator.sh help new"
+}
+
+################################################################################
+# SECTION 14: ABP CLI Command Wrappers
+################################################################################
+
+execute_abp_command() {
+    local command=$1
+    shift
+    local args=("$@")
+    
+    if ! command -v abp &> /dev/null; then
+        log_error "ABP CLI not found. Install with: dotnet tool install -g Volo.Abp.Cli"
+        return 1
+    fi
+    
+    log_info "Executing: abp $command ${args[*]}"
+    
+    if abp "$command" "${args[@]}"; then
+        log_success "Command completed successfully"
+        return 0
+    else
+        log_error "Command failed with exit code $?"
+        return 1
+    fi
+}
+
+# Project & Solution Commands
+abp_new() {
+    local name=$1
+    shift
+    local args=("$@")
+    
+    if [ -z "$name" ]; then
+        log_error "Name is required"
+        return 1
+    fi
+    
+    execute_abp_command "new" --name "$name" "${args[@]}"
+}
+
+abp_new_module() {
+    local name=$1
+    shift
+    local args=("$@")
+    
+    if [ -z "$name" ]; then
+        log_error "Name is required"
+        return 1
+    fi
+    
+    execute_abp_command "new-module" --name "$name" "${args[@]}"
+}
+
+abp_new_package() {
+    local name=$1
+    shift
+    local args=("$@")
+    
+    if [ -z "$name" ]; then
+        log_error "Name is required"
+        return 1
+    fi
+    
+    execute_abp_command "new-package" --name "$name" "${args[@]}"
+}
+
+abp_init_solution() {
+    local name=$1
+    shift
+    local args=("$@")
+    
+    if [ -z "$name" ]; then
+        log_error "Name is required"
+        return 1
+    fi
+    
+    execute_abp_command "init-solution" --name "$name" "${args[@]}"
+}
+
+abp_update() {
+    execute_abp_command "update" "$@"
+}
+
+abp_upgrade() {
+    execute_abp_command "upgrade" "$@"
+}
+
+abp_clean() {
+    execute_abp_command "clean" "$@"
+}
+
+# Package & Module Management
+abp_add_package() {
+    local project=$1
+    local package=$2
+    shift 2
+    local args=("$@")
+    
+    if [ -z "$project" ] || [ -z "$package" ]; then
+        log_error "Both --project and --package are required"
+        return 1
+    fi
+    
+    execute_abp_command "add-package" --project "$project" --package "$package" "${args[@]}"
+}
+
+abp_add_package_ref() {
+    local project=$1
+    local package=$2
+    shift 2
+    local args=("$@")
+    
+    if [ -z "$project" ] || [ -z "$package" ]; then
+        log_error "Both --project and --package are required"
+        return 1
+    fi
+    
+    execute_abp_command "add-package-ref" --project "$project" --package "$package" "${args[@]}"
+}
+
+abp_install_module() {
+    local solution_name=$1
+    local module=$2
+    shift 2
+    local args=("$@")
+    
+    if [ -z "$solution_name" ] || [ -z "$module" ]; then
+        log_error "Both --solution-name and --module are required"
+        return 1
+    fi
+    
+    execute_abp_command "install-module" --solution-name "$solution_name" --module "$module" "${args[@]}"
+}
+
+abp_install_local_module() {
+    local solution_name=$1
+    local module=$2
+    shift 2
+    local args=("$@")
+    
+    if [ -z "$solution_name" ] || [ -z "$module" ]; then
+        log_error "Both --solution-name and --module are required"
+        return 1
+    fi
+    
+    execute_abp_command "install-local-module" --solution-name "$solution_name" --module "$module" "${args[@]}"
+}
+
+abp_list_modules() {
+    execute_abp_command "list-modules" "$@"
+}
+
+abp_list_templates() {
+    execute_abp_command "list-templates" "$@"
+}
+
+# Source Code Management
+abp_get_source() {
+    local module=$1
+    shift
+    local args=("$@")
+    
+    if [ -z "$module" ]; then
+        log_error "Module is required (--module)"
+        return 1
+    fi
+    
+    execute_abp_command "get-source" --module "$module" "${args[@]}"
+}
+
+abp_add_source_code() {
+    local solution_name=$1
+    local module=$2
+    shift 2
+    local args=("$@")
+    
+    if [ -z "$solution_name" ] || [ -z "$module" ]; then
+        log_error "Both --solution-name and --module are required"
+        return 1
+    fi
+    
+    execute_abp_command "add-source-code" --solution-name "$solution_name" --module "$module" "${args[@]}"
+}
+
+abp_list_module_sources() {
+    execute_abp_command "list-module-sources" "$@"
+}
+
+abp_add_module_source() {
+    local name=$1
+    local url=$2
+    
+    if [ -z "$name" ] || [ -z "$url" ]; then
+        log_error "Both --name and --url are required"
+        return 1
+    fi
+    
+    execute_abp_command "add-module-source" --name "$name" --url "$url"
+}
+
+abp_delete_module_source() {
+    local name=$1
+    
+    if [ -z "$name" ]; then
+        log_error "Name is required (--name)"
+        return 1
+    fi
+    
+    execute_abp_command "delete-module-source" --name "$name"
+}
+
+# Proxy Generation
+abp_generate_proxy() {
+    execute_abp_command "generate-proxy" "$@"
+}
+
+abp_remove_proxy() {
+    execute_abp_command "remove-proxy" "$@"
+}
+
+# Version Management
+abp_switch_to_preview() {
+    execute_abp_command "switch-to-preview" "$@"
+}
+
+abp_switch_to_nightly() {
+    execute_abp_command "switch-to-nightly" "$@"
+}
+
+abp_switch_to_stable() {
+    execute_abp_command "switch-to-stable" "$@"
+}
+
+abp_switch_to_local() {
+    execute_abp_command "switch-to-local" "$@"
+}
+
+# Localization
+abp_translate() {
+    local culture=$1
+    shift
+    local args=("$@")
+    
+    if [ -z "$culture" ]; then
+        log_error "Culture is required (--culture)"
+        return 1
+    fi
+    
+    execute_abp_command "translate" --culture "$culture" "${args[@]}"
+}
+
+# Authentication
+abp_login() {
+    execute_abp_command "login" "$@"
+}
+
+abp_login_info() {
+    execute_abp_command "login-info" "$@"
+}
+
+abp_logout() {
+    execute_abp_command "logout" "$@"
+}
+
+# Build & Bundle
+abp_bundle() {
+    execute_abp_command "bundle" "$@"
+}
+
+abp_install_libs() {
+    execute_abp_command "install-libs" "$@"
+}
+
+# Utilities
+abp_check_extensions() {
+    execute_abp_command "check-extensions" "$@"
+}
+
+abp_install_old_cli() {
+    execute_abp_command "install-old-cli" "$@"
+}
+
+abp_generate_razor_page() {
+    execute_abp_command "generate-razor-page" "$@"
+}
+
+# Kubernetes
+abp_kube_connect() {
+    local context=$1
+    shift
+    local args=("$@")
+    
+    if [ -z "$context" ]; then
+        log_error "Context is required (--context)"
+        return 1
+    fi
+    
+    execute_abp_command "kube-connect" --context "$context" "${args[@]}"
+}
+
+abp_kube_intercept() {
+    local service=$1
+    shift
+    local args=("$@")
+    
+    if [ -z "$service" ]; then
+        log_error "Service is required (--service)"
+        return 1
+    fi
+    
+    execute_abp_command "kube-intercept" --service "$service" "${args[@]}"
+}
+
+# Help & Info
+abp_help() {
+    if [ $# -gt 0 ]; then
+        abp help "$@"
+    else
+        abp help
+    fi
+}
+
+abp_cli() {
+    abp cli "$@"
+}
+
+################################################################################
+# SECTION 15: Interactive Command Wrappers
+################################################################################
+
+interactive_new_module() {
+    print_header "Create New Module"
+    read -p "Enter module name: " name
+    if [ -z "$name" ]; then
+        log_error "Module name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter template [module] (default: module): " template
+    template=${template:-module}
+    read -p "Enter database provider [ef/mongodb] (default: ef): " db_provider
+    db_provider=${db_provider:-ef}
+    abp_new_module "$name" --template "$template" --database-provider "$db_provider"
+    read -p "Press Enter to continue..."
+}
+
+interactive_new_package() {
+    print_header "Create New Package"
+    read -p "Enter package name: " name
+    if [ -z "$name" ]; then
+        log_error "Package name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter template [package] (default: package): " template
+    template=${template:-package}
+    abp_new_package "$name" --template "$template"
+    read -p "Press Enter to continue..."
+}
+
+interactive_init_solution() {
+    print_header "Initialize Solution"
+    read -p "Enter solution name: " name
+    if [ -z "$name" ]; then
+        log_error "Solution name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter template [app] (default: app): " template
+    template=${template:-app}
+    read -p "Enter database provider [ef/mongodb] (default: ef): " db_provider
+    db_provider=${db_provider:-ef}
+    abp_init_solution "$name" --template "$template" --database-provider "$db_provider"
+    read -p "Press Enter to continue..."
+}
+
+interactive_update() {
+    print_header "Update Solution"
+    read -p "Enter solution name (optional): " solution_name
+    read -p "Skip build? [y/N]: " skip_build
+    local args=()
+    [ -n "$solution_name" ] && args+=(--solution-name "$solution_name")
+    [ "$skip_build" = "y" ] || [ "$skip_build" = "Y" ] && args+=(--no-build)
+    abp_update "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_upgrade() {
+    print_header "Upgrade Solution"
+    read -p "Enter solution name (optional): " solution_name
+    read -p "Check only? [y/N]: " check_only
+    local args=()
+    [ -n "$solution_name" ] && args+=(--solution-name "$solution_name")
+    [ "$check_only" = "y" ] || [ "$check_only" = "Y" ] && args+=(--check)
+    abp_upgrade "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_clean() {
+    print_header "Clean Solution"
+    read -p "Enter solution name (optional): " solution_name
+    local args=()
+    [ -n "$solution_name" ] && args+=(--solution-name "$solution_name")
+    abp_clean "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_add_package() {
+    print_header "Add Package"
+    read -p "Enter project path: " project
+    if [ -z "$project" ]; then
+        log_error "Project path is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter package name: " package
+    if [ -z "$package" ]; then
+        log_error "Package name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter version (optional): " version
+    read -p "Include source code? [y/N]: " with_source
+    local args=()
+    [ -n "$version" ] && args+=(--version "$version")
+    [ "$with_source" = "y" ] || [ "$with_source" = "Y" ] && args+=(--with-source-code)
+    abp_add_package "$project" "$package" "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_add_package_ref() {
+    print_header "Add Package Reference"
+    read -p "Enter project path: " project
+    if [ -z "$project" ]; then
+        log_error "Project path is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter package name: " package
+    if [ -z "$package" ]; then
+        log_error "Package name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter version (optional): " version
+    local args=()
+    [ -n "$version" ] && args+=(--version "$version")
+    abp_add_package_ref "$project" "$package" "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_install_module() {
+    print_header "Install Module"
+    read -p "Enter solution name: " solution_name
+    if [ -z "$solution_name" ]; then
+        log_error "Solution name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter module name: " module
+    if [ -z "$module" ]; then
+        log_error "Module name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter version (optional): " version
+    read -p "Skip DB migrations? [y/N]: " skip_db
+    local args=()
+    [ -n "$version" ] && args+=(--version "$version")
+    [ "$skip_db" = "y" ] || [ "$skip_db" = "Y" ] && args+=(--skip-db-migrations)
+    abp_install_module "$solution_name" "$module" "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_install_local_module() {
+    print_header "Install Local Module"
+    read -p "Enter solution name: " solution_name
+    if [ -z "$solution_name" ]; then
+        log_error "Solution name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter module path: " module_path
+    if [ -z "$module_path" ]; then
+        log_error "Module path is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Skip DB migrations? [y/N]: " skip_db
+    local args=()
+    [ "$skip_db" = "y" ] || [ "$skip_db" = "Y" ] && args+=(--skip-db-migrations)
+    abp_install_local_module "$solution_name" "$module_path" "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_get_source() {
+    print_header "Get Module Source"
+    read -p "Enter module name: " module
+    if [ -z "$module" ]; then
+        log_error "Module name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter version (optional): " version
+    read -p "Enter output folder (optional): " output
+    local args=()
+    [ -n "$version" ] && args+=(--version "$version")
+    [ -n "$output" ] && args+=(--output-folder "$output")
+    abp_get_source "$module" "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_add_source_code() {
+    print_header "Add Source Code"
+    read -p "Enter solution name: " solution_name
+    if [ -z "$solution_name" ]; then
+        log_error "Solution name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter module name: " module
+    if [ -z "$module" ]; then
+        log_error "Module name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter version (optional): " version
+    local args=()
+    [ -n "$version" ] && args+=(--version "$version")
+    abp_add_source_code "$solution_name" "$module" "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_add_module_source() {
+    print_header "Add Module Source"
+    read -p "Enter source name: " name
+    if [ -z "$name" ]; then
+        log_error "Source name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter source URL: " url
+    if [ -z "$url" ]; then
+        log_error "Source URL is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    abp_add_module_source "$name" "$url"
+    read -p "Press Enter to continue..."
+}
+
+interactive_delete_module_source() {
+    print_header "Delete Module Source"
+    read -p "Enter source name: " name
+    if [ -z "$name" ]; then
+        log_error "Source name is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    abp_delete_module_source "$name"
+    read -p "Press Enter to continue..."
+}
+
+interactive_generate_proxy() {
+    print_header "Generate Proxy"
+    read -p "Enter module name (optional): " module
+    read -p "Enter output path (optional): " output
+    read -p "Enter API name (optional): " api_name
+    read -p "Enter target [angular/react-native] (optional): " target
+    read -p "Angular? [y/N]: " angular
+    read -p "React Native? [y/N]: " react_native
+    local args=()
+    [ -n "$module" ] && args+=(--module "$module")
+    [ -n "$output" ] && args+=(--output "$output")
+    [ -n "$api_name" ] && args+=(--api-name "$api_name")
+    [ -n "$target" ] && args+=(--target "$target")
+    [ "$angular" = "y" ] || [ "$angular" = "Y" ] && args+=(--angular)
+    [ "$react_native" = "y" ] || [ "$react_native" = "Y" ] && args+=(--react-native)
+    abp_generate_proxy "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_remove_proxy() {
+    print_header "Remove Proxy"
+    read -p "Enter module name (optional): " module
+    read -p "Enter API name (optional): " api_name
+    local args=()
+    [ -n "$module" ] && args+=(--module "$module")
+    [ -n "$api_name" ] && args+=(--api-name "$api_name")
+    abp_remove_proxy "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_switch_to_preview() {
+    print_header "Switch to Preview"
+    read -p "Enter solution name (optional): " solution_name
+    local args=()
+    [ -n "$solution_name" ] && args+=(--solution-name "$solution_name")
+    abp_switch_to_preview "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_switch_to_nightly() {
+    print_header "Switch to Nightly"
+    read -p "Enter solution name (optional): " solution_name
+    local args=()
+    [ -n "$solution_name" ] && args+=(--solution-name "$solution_name")
+    abp_switch_to_nightly "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_switch_to_stable() {
+    print_header "Switch to Stable"
+    read -p "Enter solution name (optional): " solution_name
+    local args=()
+    [ -n "$solution_name" ] && args+=(--solution-name "$solution_name")
+    abp_switch_to_stable "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_switch_to_local() {
+    print_header "Switch to Local"
+    read -p "Enter solution name (optional): " solution_name
+    local args=()
+    [ -n "$solution_name" ] && args+=(--solution-name "$solution_name")
+    abp_switch_to_local "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_login() {
+    print_header "Login"
+    read -p "Enter username (optional, will prompt if not provided): " username
+    read -sp "Enter password (optional, will prompt if not provided): " password
+    echo
+    local args=()
+    [ -n "$username" ] && args+=(--username "$username")
+    [ -n "$password" ] && args+=(--password "$password")
+    abp_login "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_bundle() {
+    print_header "Bundle (Blazor/MAUI)"
+    read -p "Enter working directory (optional): " working_dir
+    read -p "Force rebuild? [y/N]: " force
+    read -p "Enter project type [webassembly/maui-blazor] (default: webassembly): " project_type
+    project_type=${project_type:-webassembly}
+    local args=()
+    [ -n "$working_dir" ] && args+=(--working-directory "$working_dir")
+    [ "$force" = "y" ] || [ "$force" = "Y" ] && args+=(--force)
+    [ -n "$project_type" ] && args+=(--project-type "$project_type")
+    abp_bundle "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_install_libs() {
+    print_header "Install Libs"
+    read -p "Enter working directory (optional): " working_dir
+    local args=()
+    [ -n "$working_dir" ] && args+=(--working-directory "$working_dir")
+    abp_install_libs "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_translate() {
+    print_header "Translate"
+    read -p "Enter culture code (e.g., en, tr, fr): " culture
+    if [ -z "$culture" ]; then
+        log_error "Culture code is required"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    read -p "Enter output path (optional): " output
+    read -p "Translate all? [y/N]: " all
+    local args=()
+    [ -n "$output" ] && args+=(--output "$output")
+    [ "$all" = "y" ] || [ "$all" = "Y" ] && args+=(--all)
+    abp_translate "$culture" "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_install_old_cli() {
+    print_header "Install Old CLI"
+    read -p "Enter version (optional, latest if not specified): " version
+    local args=()
+    [ -n "$version" ] && args+=(--version "$version")
+    abp_install_old_cli "${args[@]}"
+    read -p "Press Enter to continue..."
+}
+
+interactive_generate_razor_page() {
+    print_header "Generate Razor Page"
+    read -p "Enter working directory (optional): " working_dir
+    local args=()
+    [ -n "$working_dir" ] && args+=(--working-directory "$working_dir")
+    abp_generate_razor_page "${args[@]}"
+    read -p "Press Enter to continue..."
 }
 
 ################################################################################
@@ -1289,11 +2115,44 @@ main() {
         
         case $choice in
             1) create_new_project ;;
-            2) add_new_module ;;
-            3) add_entity_with_crud ;;
-            4) generate_from_json_menu ;;
-            5) check_dependencies; read -p "Press Enter to continue..." ;;
-            6) 
+            2) interactive_new_module ;;
+            3) interactive_new_package ;;
+            4) interactive_init_solution ;;
+            5) interactive_update ;;
+            6) interactive_upgrade ;;
+            7) interactive_clean ;;
+            8) interactive_add_package ;;
+            9) interactive_add_package_ref ;;
+            10) interactive_install_module ;;
+            11) interactive_install_local_module ;;
+            12) abp_list_modules; read -p "Press Enter to continue..." ;;
+            13) abp_list_templates; read -p "Press Enter to continue..." ;;
+            14) interactive_get_source ;;
+            15) interactive_add_source_code ;;
+            16) abp_list_module_sources; read -p "Press Enter to continue..." ;;
+            17) interactive_add_module_source ;;
+            18) interactive_delete_module_source ;;
+            19) interactive_generate_proxy ;;
+            20) interactive_remove_proxy ;;
+            21) interactive_switch_to_preview ;;
+            22) interactive_switch_to_nightly ;;
+            23) interactive_switch_to_stable ;;
+            24) interactive_switch_to_local ;;
+            25) add_entity_with_crud ;;
+            26) generate_from_json_menu ;;
+            27) interactive_login ;;
+            28) abp_login_info; read -p "Press Enter to continue..." ;;
+            29) abp_logout; read -p "Press Enter to continue..." ;;
+            30) interactive_bundle ;;
+            31) interactive_install_libs ;;
+            32) interactive_translate ;;
+            33) abp_check_extensions; read -p "Press Enter to continue..." ;;
+            34) interactive_install_old_cli ;;
+            35) interactive_generate_razor_page ;;
+            36) check_dependencies; read -p "Press Enter to continue..." ;;
+            37) abp_help; read -p "Press Enter to continue..." ;;
+            38) abp_cli; read -p "Press Enter to continue..." ;;
+            99) 
                 echo ""
                 log_info "Exiting... Goodbye!"
                 exit 0
