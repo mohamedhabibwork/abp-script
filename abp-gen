@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+################################################################################
+# ABP Generator - Universal Launcher
+# Automatically detects platform and runs appropriate version
+################################################################################
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Detect platform
+detect_platform() {
+    local platform=""
+    
+    case "$(uname -s)" in
+        Linux*)     platform="Linux";;
+        Darwin*)    platform="Mac";;
+        CYGWIN*)    platform="Windows";;
+        MINGW*)     platform="Windows";;
+        MSYS*)      platform="Windows";;
+        *)          platform="Unknown";;
+    esac
+    
+    echo "$platform"
+}
+
+# Main launcher
+main() {
+    local platform=$(detect_platform)
+    
+    case "$platform" in
+        "Linux"|"Mac")
+            # Unix-like systems - use bash script
+            if [ -f "${SCRIPT_DIR}/abp-generator.sh" ]; then
+                exec "${SCRIPT_DIR}/abp-generator.sh" "$@"
+            else
+                echo "Error: abp-generator.sh not found!"
+                exit 1
+            fi
+            ;;
+        "Windows")
+            # Windows - use PowerShell script
+            if command -v pwsh &> /dev/null; then
+                # PowerShell Core (pwsh)
+                exec pwsh -File "${SCRIPT_DIR}/abp-generator.ps1" "$@"
+            elif command -v powershell &> /dev/null; then
+                # Windows PowerShell
+                exec powershell -File "${SCRIPT_DIR}/abp-generator.ps1" "$@"
+            else
+                echo "Error: PowerShell not found!"
+                echo "Please install PowerShell: https://aka.ms/powershell"
+                exit 1
+            fi
+            ;;
+        *)
+            echo "Error: Unsupported platform: $platform"
+            echo "Supported platforms: Linux, macOS, Windows"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
+

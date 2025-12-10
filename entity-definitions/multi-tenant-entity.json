@@ -1,0 +1,58 @@
+{
+  "entity": "Order",
+  "module": "Sales",
+  "properties": [
+    {
+      "name": "OrderNumber",
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "maxLength": 50
+    },
+    {
+      "name": "OrderDate",
+      "type": "DateTime",
+      "required": true
+    },
+    {
+      "name": "TotalAmount",
+      "type": "decimal",
+      "required": true
+    },
+    {
+      "name": "Status",
+      "type": "string",
+      "required": true,
+      "maxLength": 50
+    },
+    {
+      "name": "Notes",
+      "type": "string",
+      "maxLength": 1000
+    }
+  ],
+  "relationships": [
+    {
+      "name": "Customer",
+      "type": "ManyToOne",
+      "entity": "Customer",
+      "foreignKey": "CustomerId",
+      "required": true,
+      "tenantScoped": true
+    },
+    {
+      "name": "OrderItems",
+      "type": "OneToMany",
+      "entity": "OrderItem",
+      "foreignKey": "OrderId"
+    }
+  ],
+  "options": {
+    "generateSeeder": true,
+    "generateTests": true,
+    "generateValidation": true,
+    "generateEvents": ["Created", "StatusChanged", "Completed", "Cancelled"],
+    "multiTenant": true
+  }
+}
+

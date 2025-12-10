@@ -1,0 +1,28 @@
+{
+  "entity": "Product",
+  "module": "Catalog",
+  "properties": [
+    {
+      "name": "Name",
+      "type": "string",
+      "required": true,
+      "maxLength": 128
+    },
+    {
+      "name": "Price",
+      "type": "decimal",
+      "required": true
+    },
+    {
+      "name": "Stock",
+      "type": "int",
+      "required": true
+    },
+    {
+      "name": "Description",
+      "type": "string",
+      "maxLength": 2000
+    }
+  ]
+}
+
