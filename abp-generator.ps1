@@ -35,6 +35,7 @@ $script:ModuleName = ""
 $script:EntityName = ""
 $script:TemplateType = ""
 $script:IsMultiTenant = $false
+$script:EntityBaseClass = "FullAuditedAggregateRoot<Guid>"
 
 ################################################################################
 # SECTION 2: Utility Functions
@@ -192,7 +193,26 @@ function Read-JsonEntity {
         $script:EntityName = $json.entity
         $script:ModuleName = $json.module
         
-        Write-Success "Parsed entity: $script:EntityName in module: $script:ModuleName"
+        # Parse base class if provided
+        if ($json.baseClass) {
+            $script:EntityBaseClass = $json.baseClass
+        } else {
+            $script:EntityBaseClass = "FullAuditedAggregateRoot<Guid>"
+        }
+        
+        # Parse ID type if provided
+        if ($json.idType) {
+            $script:EntityIdType = $json.idType
+        } else {
+            $script:EntityIdType = "Guid"
+        }
+        
+        # Update base class with ID type if it contains <Guid>
+        if ($script:EntityBaseClass -match "<Guid>") {
+            $script:EntityBaseClass = $script:EntityBaseClass -replace "<Guid>", "<$($script:EntityIdType)>"
+        }
+        
+        Write-Success "Parsed entity: $script:EntityName in module: $script:ModuleName (Base: $script:EntityBaseClass, ID: $script:EntityIdType)"
         return $json
     } catch {
         Write-Error-Custom "Failed to parse JSON: $_"
@@ -400,6 +420,39 @@ function Invoke-TemplateProcessing {
     return $true
 }
 
+function Get-BaseClassConstructor {
+    param([string]$BaseClass)
+    
+    # Check if base class is an AggregateRoot (has constructor with id)
+    if ($BaseClass -match "AggregateRoot") {
+        return " : base(id)"
+    }
+    # For Entity classes, we need to set Id property
+    return ""
+}
+
+function Get-IdAssignment {
+    param([string]$BaseClass)
+    
+    # Check if base class is an AggregateRoot (has constructor with id)
+    if ($BaseClass -match "AggregateRoot") {
+        return ""
+    }
+    # For Entity classes, we need to set Id property
+    return "Id = id;`n            "
+}
+
+function Get-IdDefaultValue {
+    param([string]$IdType)
+    
+    switch ($IdType) {
+        "Guid" { return "Guid.NewGuid()" }
+        "long" { return "0" }
+        "int" { return "0" }
+        default { return "Guid.NewGuid()" }
+    }
+}
+
 function Invoke-TemplateWithProperties {
     param(
         [string]$TemplateFile,
@@ -424,6 +477,19 @@ function Invoke-TemplateWithProperties {
     
     # Replace PROPERTIES placeholder
     $content = $content -replace [regex]::Escape('${PROPERTIES}'), $propertiesCode
+    
+    # Handle base class specific placeholders
+    $baseClass = $Variables["BASE_CLASS"]
+    $idType = $Variables["ID_TYPE"]
+    if ($baseClass) {
+        $baseClassConstructor = Get-BaseClassConstructor $baseClass
+        $idAssignment = Get-IdAssignment $baseClass
+        $content = $content -replace [regex]::Escape('${BASE_CLASS_CONSTRUCTOR}'), $baseClassConstructor
+        $content = $content -replace [regex]::Escape('${ID_ASSIGNMENT}'), $idAssignment
+    }
+    if ($idType) {
+        $content = $content -replace [regex]::Escape('${ID_TYPE}'), $idType
+    }
     
     # Replace other variables
     foreach ($key in $Variables.Keys) {
@@ -500,11 +566,20 @@ function New-EntityFiles {
     
     $entityNameLower = $script:EntityName.Substring(0,1).ToLower() + $script:EntityName.Substring(1)
     
+    # Check if base class includes ISoftDelete
+    $softDeleteUsing = ""
+    if ($script:EntityBaseClass -match "ISoftDelete") {
+        $softDeleteUsing = "`nusing Volo.Abp;"
+    }
+    
     $vars = @{
         NAMESPACE = $script:Namespace
         MODULE_NAME = $script:ModuleName
         ENTITY_NAME = $script:EntityName
         ENTITY_NAME_LOWER = $entityNameLower
+        BASE_CLASS = $script:EntityBaseClass
+        ID_TYPE = $script:EntityIdType
+        SOFT_DELETE_USING = $softDeleteUsing
     }
     
     $templateFile = Join-Path $script:TemplatesDir "domain\entity.template.cs"
@@ -675,6 +750,100 @@ function New-TestFiles {
 # SECTION 9: Interactive Entity Generation
 ################################################################################
 
+function Get-AbpEntityBaseClasses {
+    param([string]$IdType = "Guid")
+    
+    return @(
+        @{Name="Entity<$IdType>"; Description="Basic entity"},
+        @{Name="AggregateRoot<$IdType>"; Description="Aggregate root"},
+        @{Name="BasicAggregateRoot<$IdType>"; Description="Simplified aggregate root"},
+        @{Name="CreationAuditedEntity<$IdType>"; Description="Entity with creation audit"},
+        @{Name="CreationAuditedAggregateRoot<$IdType>"; Description="Aggregate root with creation audit"},
+        @{Name="AuditedEntity<$IdType>"; Description="Entity with creation and modification audit"},
+        @{Name="AuditedAggregateRoot<$IdType>"; Description="Aggregate root with creation and modification audit"},
+        @{Name="FullAuditedEntity<$IdType>"; Description="Entity with full audit (creation, modification, deletion)"},
+        @{Name="FullAuditedAggregateRoot<$IdType>"; Description="Aggregate root with full audit (default)"},
+        @{Name="CreationAuditedEntity<$IdType>, ISoftDelete"; Description="Entity with creation audit and soft delete"},
+        @{Name="CreationAuditedAggregateRoot<$IdType>, ISoftDelete"; Description="Aggregate root with creation audit and soft delete"},
+        @{Name="AuditedEntity<$IdType>, ISoftDelete"; Description="Entity with audit and soft delete"},
+        @{Name="AuditedAggregateRoot<$IdType>, ISoftDelete"; Description="Aggregate root with audit and soft delete"},
+        @{Name="FullAuditedEntity<$IdType>, ISoftDelete"; Description="Entity with full audit and soft delete"},
+        @{Name="FullAuditedAggregateRoot<$IdType>, ISoftDelete"; Description="Aggregate root with full audit and soft delete"}
+    )
+}
+
+function Select-EntityIdType {
+    Write-Host ""
+    Write-Host "Select entity ID type:"
+    Write-Host ""
+    Write-Host "  1) Guid (default) - Globally unique identifier"
+    Write-Host "  2) long - 64-bit integer"
+    Write-Host "  3) int - 32-bit integer"
+    Write-Host ""
+    
+    $choice = Read-Host "Enter choice [1-3] (default: 1)"
+    
+    if ([string]::IsNullOrEmpty($choice)) {
+        $choice = "1"
+    }
+    
+    switch ($choice) {
+        "1" { 
+            $script:EntityIdType = "Guid"
+            Write-Info "Selected ID type: Guid"
+            return $true
+        }
+        "2" { 
+            $script:EntityIdType = "long"
+            Write-Info "Selected ID type: long"
+            return $true
+        }
+        "3" { 
+            $script:EntityIdType = "int"
+            Write-Info "Selected ID type: int"
+            return $true
+        }
+        default {
+            Write-Error-Custom "Invalid choice, using default: Guid"
+            $script:EntityIdType = "Guid"
+            return $false
+        }
+    }
+}
+
+function Select-EntityBaseClass {
+    Write-Host ""
+    Write-Host "Select entity base class:"
+    Write-Host ""
+    
+    $baseClasses = Get-AbpEntityBaseClasses -IdType $script:EntityIdType
+    for ($i = 0; $i -lt $baseClasses.Count; $i++) {
+        $bc = $baseClasses[$i]
+        $default = if ($bc.Name -eq "FullAuditedAggregateRoot<$($script:EntityIdType)>") { " (default)" } else { "" }
+        Write-Host "  $($i + 1)) $($bc.Name)$default"
+        Write-Host "     $($bc.Description)"
+    }
+    Write-Host ""
+    
+    $choice = Read-Host "Enter choice [1-$($baseClasses.Count)] (default: 9)"
+    
+    if ([string]::IsNullOrEmpty($choice)) {
+        $choice = "9"
+    }
+    
+    $index = [int]$choice - 1
+    if ($index -ge 0 -and $index -lt $baseClasses.Count) {
+        $script:EntityBaseClass = $baseClasses[$index].Name
+        Write-Info "Selected base class: $script:EntityBaseClass"
+        return $true
+    } else {
+        $defaultBase = "FullAuditedAggregateRoot<$($script:EntityIdType)>"
+        Write-Error-Custom "Invalid choice, using default: $defaultBase"
+        $script:EntityBaseClass = $defaultBase
+        return $false
+    }
+}
+
 function New-EntityInteractive {
     Write-Step "Interactive entity generation"
     
@@ -709,6 +878,12 @@ function New-EntityInteractive {
     if (-not (Test-EntityName $script:EntityName)) {
         return $false
     }
+    
+    # Select ID type first
+    Select-EntityIdType | Out-Null
+    
+    # Select base class (will use selected ID type)
+    Select-EntityBaseClass | Out-Null
     
     Write-Warning-Custom "Basic entity generation (no JSON)"
     Write-Info "For advanced features (properties, relationships), use JSON format"
@@ -995,7 +1170,7 @@ function Invoke-CliMode {
             } catch {
                 Write-Error-Custom "Error executing command: $_"
                 Write-Host ""
-                Show-Usage
+            Show-Usage
             }
         }
     }

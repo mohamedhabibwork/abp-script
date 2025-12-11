@@ -1,0 +1,31 @@
+{
+  "entity": "Category",
+  "module": "Catalog",
+  "idType": "int",
+  "baseClass": "Entity<int>",
+  "properties": [
+    {
+      "name": "Name",
+      "type": "string",
+      "required": true,
+      "maxLength": 128
+    },
+    {
+      "name": "Description",
+      "type": "string",
+      "maxLength": 500
+    },
+    {
+      "name": "DisplayOrder",
+      "type": "int",
+      "required": true,
+      "default": 0
+    }
+  ],
+  "options": {
+    "generateSeeder": true,
+    "generateTests": false,
+    "generateValidation": true
+  }
+}
+

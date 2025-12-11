@@ -1,8 +1,8 @@
 {
   "entity": "Order",
   "module": "Sales",
-  "idType": "Guid",
-  "baseClass": "FullAuditedAggregateRoot<Guid>",
+  "idType": "long",
+  "baseClass": "AuditedAggregateRoot<long>",
   "properties": [
     {
       "name": "OrderNumber",
@@ -26,11 +26,6 @@
       "type": "string",
       "required": true,
       "maxLength": 50
-    },
-    {
-      "name": "Notes",
-      "type": "string",
-      "maxLength": 1000
     }
   ],
   "relationships": [
@@ -39,8 +34,7 @@
       "type": "ManyToOne",
       "entity": "Customer",
       "foreignKey": "CustomerId",
-      "required": true,
-      "tenantScoped": true
+      "required": true
     },
     {
       "name": "OrderItems",
@@ -52,9 +46,7 @@
   "options": {
     "generateSeeder": true,
     "generateTests": true,
-    "generateValidation": true,
-    "generateEvents": ["Created", "StatusChanged", "Completed", "Cancelled"],
-    "multiTenant": true
+    "generateValidation": true
   }
 }
 

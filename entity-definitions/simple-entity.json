@@ -1,6 +1,8 @@
 {
   "entity": "Product",
   "module": "Catalog",
+  "idType": "Guid",
+  "baseClass": "FullAuditedAggregateRoot<Guid>",
   "properties": [
     {
       "name": "Name",

@@ -1,12 +1,14 @@
 using System;
+using Volo.Abp.Domain.Entities;
 using Volo.Abp.Domain.Entities.Auditing;
+${SOFT_DELETE_USING}
 
-namespace ${NAMESPACE}.${MODULE_NAME}.Entities
+namespace ${NAMESPACE}.${MODULE_NAME}
 {
     /// <summary>
     /// Represents a ${ENTITY_NAME} entity.
     /// </summary>
-    public class ${ENTITY_NAME} : FullAuditedAggregateRoot<Guid>
+    public class ${ENTITY_NAME} : ${BASE_CLASS}
     {
         /// <summary>
         /// Gets or sets the name of the ${ENTITY_NAME}.
@@ -40,9 +42,9 @@ namespace ${NAMESPACE}.${MODULE_NAME}.Entities
         /// </summary>
         /// <param name="id">The unique identifier.</param>
         /// <param name="name">The name.</param>
-        public ${ENTITY_NAME}(Guid id, string name) : base(id)
+        public ${ENTITY_NAME}(${ID_TYPE} id, string name)${BASE_CLASS_CONSTRUCTOR}
         {
-            SetName(name);
+            ${ID_ASSIGNMENT}SetName(name);
             IsActive = true;
         }
 

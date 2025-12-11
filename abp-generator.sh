@@ -47,6 +47,7 @@ MODULE_NAME=""
 ENTITY_NAME=""
 TEMPLATE_TYPE=""
 IS_MULTITENANT=false
+ENTITY_BASE_CLASS="FullAuditedAggregateRoot<Guid>"
 
 ################################################################################
 # SECTION 2: Utility Functions
@@ -200,7 +201,24 @@ parse_json_entity() {
         return 1
     fi
     
-    log_success "Parsed entity: $ENTITY_NAME in module: $MODULE_NAME"
+    # Parse base class if provided
+    if jq -e '.baseClass' "$json_file" > /dev/null 2>&1; then
+        ENTITY_BASE_CLASS=$(jq -r '.baseClass' "$json_file")
+    else
+        ENTITY_BASE_CLASS="FullAuditedAggregateRoot<Guid>"
+    fi
+    
+    # Parse ID type if provided
+    if jq -e '.idType' "$json_file" > /dev/null 2>&1; then
+        ENTITY_ID_TYPE=$(jq -r '.idType' "$json_file")
+    else
+        ENTITY_ID_TYPE="Guid"
+    fi
+    
+    # Update base class with ID type if it contains <Guid>
+    ENTITY_BASE_CLASS=$(echo "$ENTITY_BASE_CLASS" | sed "s/<Guid>/<$ENTITY_ID_TYPE>/g")
+    
+    log_success "Parsed entity: $ENTITY_NAME in module: $MODULE_NAME (Base: $ENTITY_BASE_CLASS, ID: $ENTITY_ID_TYPE)"
     return 0
 }
 
@@ -654,6 +672,8 @@ process_template_with_properties() {
         local pair=$1
         local key="${pair%%=*}"
         local value="${pair#*=}"
+        # Escape special characters for sed-like replacement
+        value=$(echo "$value" | sed 's/[[\.*^$()+?{|]/\\&/g')
         content="${content//\$\{${key}\}/${value}}"
         shift
     done
@@ -718,6 +738,25 @@ generate_entity_from_json() {
 # SECTION 8: Code Generation Functions
 ################################################################################
 
+get_base_class_constructor() {
+    local base_class="$1"
+    if echo "$base_class" | grep -q "AggregateRoot"; then
+        echo " : base(id)"
+    else
+        echo ""
+    fi
+}
+
+get_id_assignment() {
+    local base_class="$1"
+    if echo "$base_class" | grep -q "AggregateRoot"; then
+        echo ""
+    else
+        echo "Id = id;
+            "
+    fi
+}
+
 generate_entity_files() {
     local properties=$1
     local relationships=$2
@@ -725,6 +764,15 @@ generate_entity_files() {
     log_step "Generating entity file..."
     
     local entity_name_lower="$(echo ${ENTITY_NAME:0:1} | tr '[:upper:]' '[:lower:]')${ENTITY_NAME:1}"
+    local base_class_constructor=$(get_base_class_constructor "$ENTITY_BASE_CLASS")
+    local id_assignment=$(get_id_assignment "$ENTITY_BASE_CLASS")
+    
+    # Check if base class includes ISoftDelete
+    local soft_delete_using=""
+    if echo "$ENTITY_BASE_CLASS" | grep -q "ISoftDelete"; then
+        soft_delete_using="
+using Volo.Abp;"
+    fi
     
     local template_file="${TEMPLATES_DIR}/domain/entity.template.cs"
     local output_file="${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/${ENTITY_NAME}.cs"
@@ -733,7 +781,12 @@ generate_entity_files() {
         "NAMESPACE=$NAMESPACE" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
-        "ENTITY_NAME_LOWER=$entity_name_lower"
+        "ENTITY_NAME_LOWER=$entity_name_lower" \
+        "BASE_CLASS=$ENTITY_BASE_CLASS" \
+        "ID_TYPE=$ENTITY_ID_TYPE" \
+        "BASE_CLASS_CONSTRUCTOR=$base_class_constructor" \
+        "ID_ASSIGNMENT=$id_assignment" \
+        "SOFT_DELETE_USING=$soft_delete_using"
 }
 
 generate_dto_files() {
@@ -939,6 +992,12 @@ generate_entity_interactive() {
             ENTITY_NAME=""
         fi
     done
+    
+    # Select ID type first
+    select_entity_id_type
+    
+    # Select base class (will use selected ID type)
+    select_entity_base_class
     
     # Collect properties interactively
     log_info "Let's define the entity properties..."
@@ -1243,8 +1302,8 @@ parse_cli_args() {
             else
                 log_error "Command failed with exit code $?"
                 echo ""
-                show_usage
-                exit 1
+            show_usage
+            exit 1
             fi
             ;;
     esac
