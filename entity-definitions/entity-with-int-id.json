@@ -1,31 +1,45 @@
 {
-  "entity": "Category",
-  "module": "Catalog",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Catalog",
+  "entityName": "Category",
+  "entityNamePlural": "Categories",
+  "baseClass": "Entity",
   "idType": "int",
-  "baseClass": "Entity<int>",
+  "dbContextName": "CatalogDbContext",
   "properties": [
     {
       "name": "Name",
       "type": "string",
       "required": true,
-      "maxLength": 128
+      "maxLength": 128,
+      "validation": {
+        "asyncUnique": true
+      }
     },
     {
       "name": "Description",
       "type": "string",
+      "required": false,
+      "nullable": true,
       "maxLength": 500
     },
     {
       "name": "DisplayOrder",
       "type": "int",
       "required": true,
-      "default": 0
+      "defaultValue": "0",
+      "validation": {
+        "min": 0
+      }
     }
   ],
   "options": {
-    "generateSeeder": true,
-    "generateTests": false,
-    "generateValidation": true
+    "generatePermissions": true,
+    "generateLocalization": true,
+    "advancedValidation": true,
+    "apiDocumentation": true,
+    "comprehensiveTests": false,
+    "auditLogging": false
   }
 }
 

@@ -1,0 +1,37 @@
+{
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Blog",
+  "entityName": "Post",
+  "entityNamePlural": "Posts",
+  "baseClass": "AuditedAggregateRoot",
+  "idType": "Guid",
+  "dbContextName": "BlogDbContext",
+  "properties": [
+    {
+      "name": "Title",
+      "type": "string",
+      "required": true,
+      "maxLength": 200
+    },
+    {
+      "name": "Content",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "IsPublished",
+      "type": "bool",
+      "required": true,
+      "defaultValue": "false"
+    }
+  ],
+  "options": {
+    "generatePermissions": false,
+    "generateLocalization": false,
+    "advancedValidation": false,
+    "apiDocumentation": true,
+    "comprehensiveTests": false,
+    "auditLogging": false
+  }
+}
+

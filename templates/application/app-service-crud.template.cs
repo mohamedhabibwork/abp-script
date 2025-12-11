@@ -7,15 +7,18 @@ using Volo.Abp.Application.Dtos;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.EventBus.Distributed;
+using ${NAMESPACE}.Application.Contracts.${MODULE_NAME};
+using ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.DTOs;
+using ${NAMESPACE}.Domain.${MODULE_NAME};
 
-namespace ${NAMESPACE}.${MODULE_NAME}.Services
+namespace ${NAMESPACE}.Application.${MODULE_NAME}
 {
     /// <summary>
     /// Application service for ${ENTITY_NAME} management.
     /// Implements CRUD operations with full business logic.
     /// Follows Single Responsibility and Dependency Inversion principles.
     /// </summary>
-    [Authorize(${MODULE_NAME}Permissions.${ENTITY_NAME_PLURAL}.Default)]
+    [Authorize]
     public class ${ENTITY_NAME}AppService : ApplicationService, I${ENTITY_NAME}AppService
     {
         private readonly I${ENTITY_NAME}Repository _${ENTITY_NAME_LOWER}Repository;
@@ -43,7 +46,6 @@ namespace ${NAMESPACE}.${MODULE_NAME}.Services
         /// </summary>
         /// <param name="id">The ${ENTITY_NAME} ID.</param>
         /// <returns>The ${ENTITY_NAME} DTO.</returns>
-        [Authorize(${MODULE_NAME}Permissions.${ENTITY_NAME_PLURAL}.Default)]
         public virtual async Task<${ENTITY_NAME}Dto> GetAsync(Guid id)
         {
             var entity = await _${ENTITY_NAME_LOWER}Repository.GetAsync(id);
@@ -55,7 +57,6 @@ namespace ${NAMESPACE}.${MODULE_NAME}.Services
         /// </summary>
         /// <param name="input">The list input parameters.</param>
         /// <returns>Paginated result of ${ENTITY_NAME} DTOs.</returns>
-        [Authorize(${MODULE_NAME}Permissions.${ENTITY_NAME_PLURAL}.Default)]
         public virtual async Task<PagedResultDto<${ENTITY_NAME}Dto>> GetListAsync(Get${ENTITY_NAME}ListInput input)
         {
             var totalCount = await _${ENTITY_NAME_LOWER}Repository.GetCountAsync(
@@ -82,7 +83,7 @@ namespace ${NAMESPACE}.${MODULE_NAME}.Services
         /// </summary>
         /// <param name="input">The create DTO.</param>
         /// <returns>The created ${ENTITY_NAME} DTO.</returns>
-        [Authorize(${MODULE_NAME}Permissions.${ENTITY_NAME_PLURAL}.Create)]
+        [Authorize("${MODULE_NAME}.${ENTITY_NAME_PLURAL}.Create")]
         public virtual async Task<${ENTITY_NAME}Dto> CreateAsync(Create${ENTITY_NAME}Dto input)
         {
             // Use domain service for business logic
@@ -113,7 +114,7 @@ namespace ${NAMESPACE}.${MODULE_NAME}.Services
         /// <param name="id">The ${ENTITY_NAME} ID.</param>
         /// <param name="input">The update DTO.</param>
         /// <returns>The updated ${ENTITY_NAME} DTO.</returns>
-        [Authorize(${MODULE_NAME}Permissions.${ENTITY_NAME_PLURAL}.Edit)]
+        [Authorize("${MODULE_NAME}.${ENTITY_NAME_PLURAL}.Edit")]
         public virtual async Task<${ENTITY_NAME}Dto> UpdateAsync(Guid id, Update${ENTITY_NAME}Dto input)
         {
             var entity = await _${ENTITY_NAME_LOWER}Repository.GetAsync(id);
@@ -142,7 +143,7 @@ namespace ${NAMESPACE}.${MODULE_NAME}.Services
         /// Deletes a ${ENTITY_NAME}.
         /// </summary>
         /// <param name="id">The ${ENTITY_NAME} ID.</param>
-        [Authorize(${MODULE_NAME}Permissions.${ENTITY_NAME_PLURAL}.Delete)]
+        [Authorize("${MODULE_NAME}.${ENTITY_NAME_PLURAL}.Delete")]
         public virtual async Task DeleteAsync(Guid id)
         {
             var entity = await _${ENTITY_NAME_LOWER}Repository.GetAsync(id);

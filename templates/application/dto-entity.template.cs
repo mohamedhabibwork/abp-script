@@ -1,7 +1,7 @@
 using System;
 using Volo.Abp.Application.Dtos;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.DTOs
+namespace ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.DTOs
 {
     /// <summary>
     /// DTO representing a ${ENTITY_NAME} entity.

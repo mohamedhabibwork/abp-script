@@ -23,15 +23,25 @@ A comprehensive all-in-one toolkit for ABP Framework development with complete A
 - ✅ **Relationships** - ManyToOne, OneToMany, ManyToMany, OneToOne
 - ✅ **Multi-tenancy** - Auto-detect and apply tenant isolation
 - ✅ **Base Class Selection** - Choose from 15+ ABP entity base classes (Entity, AggregateRoot, Audited variants, Soft Delete)
+- ✅ **Entity Tracking** - Track all generated files for easy cleanup and rollback
+- ✅ **Cleanup Features** - Rollback, delete by name, list entities, clean all
+- ✅ **Advanced Validation** - Regex patterns, async uniqueness checks, custom validators
+- ✅ **Permission System** - Auto-generate permissions with `[Authorize]` attributes
+- ✅ **Localization** - Generate localization keys for UI elements
+- ✅ **API Documentation** - Swagger/OpenAPI attributes for comprehensive API docs
+- ✅ **Comprehensive Tests** - Unit and integration tests for all layers
+- ✅ **Audit Logging** - Configure entity change tracking
 
 ### Code Generation
 - ✅ **Domain Layer** - Entities, repositories, domain services, events
-- ✅ **Application Layer** - DTOs, services, AutoMapper profiles, validators
-- ✅ **Infrastructure Layer** - EF configurations, repositories, seeders
-- ✅ **API Layer** - Controllers with RESTful endpoints
+- ✅ **Application Layer** - DTOs, services, AutoMapper profiles, validators (basic and advanced)
+- ✅ **Infrastructure Layer** - EF configurations, repositories, seeders, audit logging
+- ✅ **API Layer** - Controllers with RESTful endpoints, Swagger documentation
 - ✅ **Events** - ETOs with event handlers
-- ✅ **Permissions** - Permission definitions
-- ✅ **Tests** - Unit and integration tests
+- ✅ **Permissions** - Permission definitions, permission names, permission providers
+- ✅ **Localization** - Localization keys (JSON) for entities, properties, validations, messages
+- ✅ **Tests** - Unit tests (AppService, Validator, Domain Manager), Integration tests
+- ✅ **Proper Namespaces** - ABP standard layered architecture (`Application.Contracts`, `Application`, `Domain`, `EntityFrameworkCore`, `HttpApi`)
 
 ### ABP CLI Integration (40+ Commands)
 - ✅ **Complete ABP CLI Support** - All ABP CLI commands available via interactive menu and CLI mode
@@ -81,6 +91,25 @@ A comprehensive all-in-one toolkit for ABP Framework development with complete A
 ---
 
 ## 🎯 Quick Start
+
+### Quick Examples
+
+**Ready-to-use example files are included:**
+
+```bash
+# Full-featured example (all advanced features enabled)
+./abp-generator.sh add-entity --from-json examples/entity-advanced.json
+
+# Simple example (basic features only)
+./abp-generator.sh add-entity --from-json examples/entity-simple.json
+
+# Various scenarios
+./abp-generator.sh add-entity --from-json entity-definitions/simple-entity.json
+./abp-generator.sh add-entity --from-json entity-definitions/entity-with-relations.json
+./abp-generator.sh add-entity --from-json entity-definitions/multi-tenant-entity.json
+```
+
+**See [JSON Schema Documentation](JSON_SCHEMA.md) for complete schema reference.**
 
 ### Installation
 
@@ -152,8 +181,8 @@ The interactive menu is organized into logical categories:
 - 24) Switch to Local
 
 **ENTITY GENERATION - Custom (Options 25-26)**
-- 25) Add Entity with CRUD
-- 26) Generate from JSON
+- 25) Add Entity with CRUD (Full-featured with permissions, localization, advanced validation)
+- 26) Generate from JSON (With support for all advanced options)
 
 **AUTHENTICATION (Options 27-29)**
 - 27) Login
@@ -166,6 +195,12 @@ The interactive menu is organized into logical categories:
 
 **LOCALIZATION (Option 32)**
 - 32) Translate
+
+**ENTITY CLEANUP (Options 39-42)**
+- 39) Rollback Last Generated Entity
+- 40) Delete Entity by Name
+- 41) List Generated Entities
+- 42) Clean All Generated Files
 
 **UTILITIES (Options 33-38)**
 - 33) Check Extensions
@@ -230,27 +265,70 @@ The interactive menu is organized into logical categories:
 
 #### 3. Generate Entity from JSON
 
-**Create JSON file:** `entity-definitions/product.json`
+**Using Example Files:**
+
+The generator includes ready-to-use example files:
+
+```bash
+# Use the advanced example (all features enabled)
+./abp-generator.sh add-entity --from-json examples/entity-advanced.json
+
+# Use the simple example (basic features only)
+./abp-generator.sh add-entity --from-json examples/entity-simple.json
+
+# Use entity definitions (various scenarios)
+./abp-generator.sh add-entity --from-json entity-definitions/simple-entity.json
+./abp-generator.sh add-entity --from-json entity-definitions/entity-with-relations.json
+```
+
+**Create Custom JSON file:** `my-entity.json`
 ```json
 {
-  "entity": "Product",
-  "module": "Catalog",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Catalog",
+  "entityName": "Product",
+  "entityNamePlural": "Products",
+  "baseClass": "FullAuditedAggregateRoot",
   "idType": "Guid",
-  "baseClass": "FullAuditedAggregateRoot<Guid>",
+  "dbContextName": "CatalogDbContext",
   "properties": [
-    {"name": "Name", "type": "string", "required": true, "maxLength": 200},
-    {"name": "Price", "type": "decimal", "required": true}
-  ]
+    {
+      "name": "Name",
+      "type": "string",
+      "required": true,
+      "maxLength": 200,
+      "validation": {
+        "pattern": "alphanumeric",
+        "asyncUnique": true
+      }
+    },
+    {
+      "name": "Price",
+      "type": "decimal",
+      "required": true,
+      "validation": {
+        "min": 0
+      }
+    }
+  ],
+  "options": {
+    "generatePermissions": true,
+    "generateLocalization": true,
+    "advancedValidation": true,
+    "apiDocumentation": true,
+    "comprehensiveTests": true,
+    "auditLogging": true
+  }
 }
 ```
 
 **Generate:**
 ```bash
 # Linux/macOS
-./abp-generator.sh add-entity --from-json entity-definitions/product.json
+./abp-generator.sh add-entity --from-json my-entity.json
 
 # Windows
-.\abp-generator.ps1 add-entity -from-json entity-definitions\product.json
+.\abp-generator.ps1 add-entity -from-json my-entity.json
 ```
 
 #### 4. Update and Upgrade Solutions
@@ -353,7 +431,23 @@ The interactive menu is organized into logical categories:
 ./abp-generator.sh add-package-ref --project src/MyApp.Application --package Volo.Blogging --version 8.0.0
 ```
 
-#### 11. Utilities
+#### 11. Entity Cleanup (New in v1.0)
+
+```bash
+# Rollback last generated entity (undo)
+./abp-generator.sh rollback
+
+# Delete specific entity by name
+./abp-generator.sh delete-entity --name Product
+
+# List all generated entities
+./abp-generator.sh list-entities
+
+# Clean all generated files (caution: removes all tracked entities)
+./abp-generator.sh clean-all
+```
+
+#### 12. Utilities
 
 ```bash
 # Check ABP CLI extensions
@@ -372,7 +466,7 @@ The interactive menu is organized into logical categories:
 ./abp-generator.sh cli
 ```
 
-#### 12. Kubernetes Integration
+#### 13. Kubernetes Integration
 
 ```bash
 # Connect to Kubernetes cluster
@@ -390,16 +484,438 @@ The interactive menu is organized into logical categories:
 
 ---
 
+## 🎨 Advanced Features (NEW in v1.0)
+
+### Cleanup & Entity Management
+
+The generator now tracks all generated files, allowing you to easily manage and cleanup entities.
+
+#### Entity Tracking
+
+All generated entities are tracked in `generated-entities.json`:
+
+```json
+{
+  "entities": [
+    {
+      "name": "Product",
+      "module": "Catalog",
+      "generatedAt": "2024-12-11T10:30:00Z",
+      "files": [
+        "src/MyApp.Domain/Catalog/Product.cs",
+        "src/MyApp.Application.Contracts/Catalog/DTOs/ProductDto.cs",
+        "src/MyApp.Application/Catalog/ProductAppService.cs",
+        "..."
+      ]
+    }
+  ]
+}
+```
+
+#### Cleanup Commands
+
+**Rollback Last Entity:**
+```bash
+./abp-generator.sh rollback
+```
+Undoes the last generated entity by deleting all its files.
+
+**Delete Specific Entity:**
+```bash
+./abp-generator.sh delete-entity --name Product
+```
+Removes all files for a specific entity.
+
+**List All Entities:**
+```bash
+./abp-generator.sh list-entities
+```
+Shows all tracked entities with generation timestamps.
+
+**Clean All Generated Files:**
+```bash
+./abp-generator.sh clean-all
+```
+⚠️ **Caution:** Removes ALL tracked generated files.
+
+### Advanced Validation
+
+The generator can create advanced FluentValidation validators with:
+
+- **Regex Patterns** - Email, phone, URL, alphanumeric, or custom regex
+- **Async Validation** - Check uniqueness against database
+- **Custom Validators** - Business rule validation
+- **Conditional Validation** - If-then rules
+- **Cross-Property Validation** - Multiple property validation
+
+**Example JSON with Advanced Validation:**
+```json
+{
+  "properties": [
+    {
+      "name": "Email",
+      "type": "string",
+      "required": true,
+      "validation": {
+        "pattern": "email",
+        "asyncUnique": true
+      }
+    },
+    {
+      "name": "SKU",
+      "type": "string",
+      "required": true,
+      "validation": {
+        "pattern": "^[A-Z0-9-]+$",
+        "asyncUnique": true,
+        "customValidator": "SKUValidator"
+      }
+    },
+    {
+      "name": "Price",
+      "type": "decimal",
+      "required": true,
+      "validation": {
+        "min": 0,
+        "max": 999999.99
+      }
+    }
+  ],
+  "options": {
+    "advancedValidation": true
+  }
+}
+```
+
+**Generated Validator:**
+```csharp
+public class CreateProductDtoAdvancedValidator : AbstractValidator<CreateProductDto>
+{
+    private readonly IProductRepository _productRepository;
+
+    public CreateProductDtoAdvancedValidator(IProductRepository productRepository)
+    {
+        _productRepository = productRepository;
+
+        // Email with async uniqueness check
+        RuleFor(x => x.Email)
+            .NotEmpty()
+            .EmailAddress()
+            .MustAsync(BeUniqueEmailAsync)
+            .WithMessage("Email already exists");
+
+        // SKU with regex pattern
+        RuleFor(x => x.SKU)
+            .Matches(@"^[A-Z0-9-]+$")
+            .WithMessage("SKU must contain only uppercase letters, numbers, and hyphens");
+
+        // Price with range validation
+        RuleFor(x => x.Price)
+            .InclusiveBetween(0, 999999.99m);
+    }
+
+    private async Task<bool> BeUniqueEmailAsync(string email, CancellationToken cancellationToken)
+    {
+        var exists = await _productRepository.ExistsByEmailAsync(email, cancellationToken: cancellationToken);
+        return !exists;
+    }
+}
+```
+
+### Permission System
+
+Auto-generates permissions and applies `[Authorize]` attributes.
+
+**Generated Permission Names:**
+```csharp
+public static class CatalogPermissions
+{
+    public const string GroupName = "Catalog";
+
+    public static class Products
+    {
+        public const string Default = GroupName + ".Products";
+        public const string Create = Default + ".Create";
+        public const string Edit = Default + ".Edit";
+        public const string Delete = Default + ".Delete";
+    }
+}
+```
+
+**Generated Permission Provider:**
+```csharp
+public class CatalogPermissionDefinitionProvider : PermissionDefinitionProvider
+{
+    public override void Define(IPermissionDefinitionContext context)
+    {
+        var catalogGroup = context.AddGroup(CatalogPermissions.GroupName, L("Permission:Catalog"));
+
+        var productPermission = catalogGroup.AddPermission(
+            CatalogPermissions.Products.Default, 
+            L("Permission:Products"));
+        productPermission.AddChild(
+            CatalogPermissions.Products.Create, 
+            L("Permission:Products.Create"));
+        productPermission.AddChild(
+            CatalogPermissions.Products.Edit, 
+            L("Permission:Products.Edit"));
+        productPermission.AddChild(
+            CatalogPermissions.Products.Delete, 
+            L("Permission:Products.Delete"));
+    }
+}
+```
+
+**Applied to AppService:**
+```csharp
+[Authorize]
+public class ProductAppService : ApplicationService, IProductAppService
+{
+    [Authorize("Catalog.Products.Create")]
+    public virtual async Task<ProductDto> CreateAsync(CreateProductDto input) { }
+
+    [Authorize("Catalog.Products.Edit")]
+    public virtual async Task<ProductDto> UpdateAsync(Guid id, UpdateProductDto input) { }
+
+    [Authorize("Catalog.Products.Delete")]
+    public virtual async Task DeleteAsync(Guid id) { }
+}
+```
+
+### Localization
+
+Generates localization keys for all entity elements.
+
+**Generated Localization File (en.json):**
+```json
+{
+  "culture": "en",
+  "texts": {
+    "Catalog:Product": "Product",
+    "Catalog:Product:Name": "Name",
+    "Catalog:Product:Price": "Price",
+    "Catalog:Product:Create": "Create Product",
+    "Catalog:Product:Edit": "Edit Product",
+    "Catalog:Product:Delete": "Delete Product",
+    "Catalog:Validation:Product:NameRequired": "Product name is required",
+    "Catalog:Validation:Product:NameLength": "Product name must be between {0} and {1} characters",
+    "Catalog:Validation:Product:PriceRange": "Price must be between {0} and {1}",
+    "Catalog:Permission:Products": "Manage Products",
+    "Catalog:Permission:Products.Create": "Create Products",
+    "Catalog:Permission:Products.Edit": "Edit Products",
+    "Catalog:Permission:Products.Delete": "Delete Products",
+    "Catalog:Success:Product:Created": "Product created successfully",
+    "Catalog:Error:Product:NotFound": "Product not found"
+  }
+}
+```
+
+### API Documentation (Swagger/OpenAPI)
+
+Enhances controllers with comprehensive Swagger attributes.
+
+**Generated Controller with Documentation:**
+```csharp
+[ApiExplorerSettings(GroupName = "Catalog")]
+[SwaggerTag("Manage Products")]
+public class ProductController : AbpController
+{
+    [HttpGet("{id}")]
+    [ProducesResponseType(typeof(ProductDto), 200)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(401)]
+    [SwaggerOperation(
+        Summary = "Get Product by ID",
+        Description = "Returns a single Product entity by its unique identifier.",
+        OperationId = "Product.Get"
+    )]
+    public virtual async Task<ProductDto> GetAsync(Guid id) { }
+
+    [HttpPost]
+    [ProducesResponseType(typeof(ProductDto), 201)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(403)]
+    [SwaggerOperation(
+        Summary = "Create a new Product",
+        Description = "Creates a new Product entity with the provided data.",
+        OperationId = "Product.Create"
+    )]
+    public virtual async Task<ProductDto> CreateAsync(CreateProductDto input) { }
+}
+```
+
+### Comprehensive Tests
+
+Generates complete test suites for all layers.
+
+**AppService Unit Tests:**
+```csharp
+public class ProductAppServiceTests : CatalogApplicationTestBase
+{
+    [Fact]
+    public async Task GetAsync_Should_Return_Entity_When_Exists() { }
+
+    [Fact]
+    public async Task GetListAsync_Should_Return_Paginated_Results() { }
+
+    [Fact]
+    public async Task CreateAsync_Should_Create_Entity_Successfully() { }
+
+    [Fact]
+    public async Task UpdateAsync_Should_Update_Entity_Successfully() { }
+
+    [Fact]
+    public async Task DeleteAsync_Should_Delete_Entity_Successfully() { }
+}
+```
+
+**Validator Tests:**
+```csharp
+public class ProductValidatorTests : CatalogApplicationTestBase
+{
+    [Fact]
+    public async Task Should_Have_Error_When_Name_Is_Empty() { }
+
+    [Fact]
+    public async Task Should_Have_Error_When_Name_Is_Too_Long() { }
+
+    [Fact]
+    public async Task Should_Have_Error_When_Name_Already_Exists() { }
+
+    [Fact]
+    public async Task Should_Not_Have_Error_When_Valid() { }
+}
+```
+
+**Domain Manager Tests:**
+```csharp
+public class ProductManagerTests : CatalogDomainTestBase
+{
+    [Fact]
+    public async Task CreateAsync_Should_Create_Entity_When_Name_Is_Unique() { }
+
+    [Fact]
+    public async Task CreateAsync_Should_Throw_When_Name_Already_Exists() { }
+
+    [Fact]
+    public async Task UpdateNameAsync_Should_Update_When_New_Name_Is_Unique() { }
+}
+```
+
+### Audit Logging
+
+Configures entity change tracking for audit purposes.
+
+**Generated Audit Configuration:**
+```csharp
+public class ProductAuditConfiguration
+{
+    public static void Configure(EntityTypeBuilder<Product> builder)
+    {
+        // Enable change tracking for audit logging
+        builder.Property(e => e.Name)
+            .HasChangeTrackingEnabled(true)
+            .HasComment("Entity name - tracked for audit");
+
+        builder.Property(e => e.Price)
+            .HasChangeTrackingEnabled(true)
+            .HasComment("Product price - tracked for audit");
+
+        // Audit-specific indexing
+        builder.HasIndex(e => e.CreationTime)
+            .HasDatabaseName("IX_Product_CreationTime");
+
+        builder.HasIndex(e => e.LastModificationTime)
+            .HasDatabaseName("IX_Product_LastModificationTime");
+    }
+}
+```
+
+### Enhanced CLI UX
+
+The generator now features a beautiful, modern CLI interface with:
+
+- ✅ **Emoji Icons** - Visual indicators for different operations
+- ✅ **Color Coding** - Green for entity generation, yellow for warnings, red for cleanup
+- ✅ **Progress Indicators** - Progress bars for long-running operations
+- ✅ **Formatted Headers** - Box-drawn headers for sections
+- ✅ **Better Error Messages** - Clear, actionable error messages
+- ✅ **Input Validation** - Real-time validation with helpful feedback
+
+**Example CLI Output:**
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║  ABP Framework Project & Module Generator v1.0                       ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+🎯 Select an operation:
+────────────────────────────────────────────────────────────────────────
+
+▶ 🎨 ENTITY GENERATION (Custom)
+  ✅ 25 Add Entity with CRUD
+  ✅ 26 Generate from JSON
+
+▶ 🗑️  ENTITY CLEANUP
+  ⚠️  39 Rollback Last Generated Entity
+  ⚠️  40 Delete Entity by Name
+  ℹ️  41 List Generated Entities
+  ❌ 42 Clean All Generated Files
+
+⏳ [====================] 100% (5/5) Generating entity files...
+✅ Entity 'Product' generated successfully!
+```
+
+### JSON Schema Extensions
+
+See `JSON_SCHEMA.md` for complete documentation of the extended JSON schema, including:
+
+- Advanced validation options
+- Permission generation flags
+- Localization settings
+- API documentation options
+- Test generation control
+- Audit logging configuration
+
+**Example Advanced Entity JSON:**
+```json
+{
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Catalog",
+  "entityName": "Product",
+  "baseClass": "FullAuditedAggregateRoot",
+  "idType": "Guid",
+  "dbContextName": "CatalogDbContext",
+  "properties": [...],
+  "relationships": [...],
+  "options": {
+    "generatePermissions": true,
+    "generateLocalization": true,
+    "advancedValidation": true,
+    "apiDocumentation": true,
+    "comprehensiveTests": true,
+    "auditLogging": true
+  }
+}
+```
+
+See `examples/entity-advanced.json` and `examples/entity-simple.json` for complete working examples.
+
+---
+
 ## 📦 JSON Entity Definition Format
 
 ### Simple Entity
 
 ```json
 {
-  "entity": "Product",
-  "module": "Catalog",
-  "baseClass": "FullAuditedAggregateRoot<Guid>",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Catalog",
+  "entityName": "Product",
+  "entityNamePlural": "Products",
+  "baseClass": "FullAuditedAggregateRoot",
   "idType": "Guid",
+  "dbContextName": "CatalogDbContext",
   "properties": [
     {
       "name": "Name",
@@ -417,25 +933,41 @@ The interactive menu is organized into logical categories:
       "type": "int",
       "required": true
     }
-  ]
+  ],
+  "options": {
+    "generatePermissions": true,
+    "generateLocalization": true,
+    "advancedValidation": false,
+    "apiDocumentation": true,
+    "comprehensiveTests": false,
+    "auditLogging": false
+  }
 }
 ```
 
 **Note:**
-- The `baseClass` field is optional. If not specified, it defaults to `FullAuditedAggregateRoot<Guid>`.
-- The `idType` field is optional. If not specified, it defaults to `Guid`. Supported values: `Guid`, `long`, `int`.
-- When both `idType` and `baseClass` are specified, ensure the base class uses the correct ID type (e.g., if `idType` is `long`, use `FullAuditedAggregateRoot<long>`).
-- If only `idType` is specified, the generator will automatically update the default base class to use that ID type.
-- See [Entity Base Classes](#entity-base-classes) section for all available options.
+- The `namespace` field is required - your project's root namespace (e.g., `MyCompany.MyProject`)
+- The `moduleName` field is required - the module name (e.g., `Catalog`, `Blog`)
+- The `entityName` field is required - the entity name in PascalCase (e.g., `Product`)
+- The `entityNamePlural` field is optional - defaults to `entityName + "s"` (e.g., `Products`)
+- The `baseClass` field is optional - defaults to `FullAuditedAggregateRoot` (without generic type - ID type is added automatically)
+- The `idType` field is optional - defaults to `Guid`. Supported values: `Guid`, `long`, `int`
+- The `dbContextName` field is optional - defaults to `moduleName + "DbContext"`
+- When `idType` is specified, the generator automatically applies it to the base class (e.g., `FullAuditedAggregateRoot<Guid>`)
+- See [Entity Base Classes](#entity-base-classes) section for all available options
+- See `examples/entity-simple.json` for a minimal working example
 
 ### Entity with Relationships
 
 ```json
 {
-  "entity": "Product",
-  "module": "Catalog",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Catalog",
+  "entityName": "Product",
+  "entityNamePlural": "Products",
+  "baseClass": "FullAuditedAggregateRoot",
   "idType": "Guid",
-  "baseClass": "FullAuditedAggregateRoot<Guid>",
+  "dbContextName": "CatalogDbContext",
   "properties": [
     {
       "name": "Name",
@@ -448,50 +980,60 @@ The interactive menu is organized into logical categories:
       "name": "SKU",
       "type": "string",
       "required": true,
-      "unique": true,
-      "maxLength": 50
+      "maxLength": 50,
+      "validation": {
+        "pattern": "^[A-Z0-9-]+$",
+        "asyncUnique": true
+      }
     },
     {
       "name": "Price",
       "type": "decimal",
       "required": true,
-      "range": {
+      "validation": {
         "min": 0,
         "max": 999999
       }
+    },
+    {
+      "name": "CategoryId",
+      "type": "Guid",
+      "required": true
     }
   ],
   "relationships": [
     {
       "name": "Category",
       "type": "ManyToOne",
-      "entity": "Category",
+      "relatedEntity": "Category",
       "foreignKey": "CategoryId",
-      "required": true,
-      "tenantScoped": true
+      "required": true
     },
     {
       "name": "Tags",
       "type": "ManyToMany",
-      "entity": "Tag",
+      "relatedEntity": "Tag",
       "joinTable": "ProductTags"
     },
     {
       "name": "Reviews",
       "type": "OneToMany",
-      "entity": "ProductReview",
+      "relatedEntity": "ProductReview",
       "foreignKey": "ProductId"
     }
   ],
   "options": {
-    "generateSeeder": true,
-    "generateTests": true,
-    "generateValidation": true,
-    "generateEvents": ["Created", "Updated", "Deleted", "PriceChanged"],
-    "multiTenant": "auto"
+    "generatePermissions": true,
+    "generateLocalization": true,
+    "advancedValidation": true,
+    "apiDocumentation": true,
+    "comprehensiveTests": true,
+    "auditLogging": true
   }
 }
 ```
+
+**See `examples/entity-advanced.json` and `entity-definitions/entity-with-relations.json` for complete working examples.**
 
 ### Property Types
 
@@ -551,66 +1093,96 @@ The generator supports all ABP Framework entity base classes. You can specify th
 **Guid ID with Full Auditing (Default):**
 ```json
 {
-  "entity": "Product",
-  "module": "Catalog",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Catalog",
+  "entityName": "Product",
+  "entityNamePlural": "Products",
+  "baseClass": "FullAuditedAggregateRoot",
   "idType": "Guid",
-  "baseClass": "FullAuditedAggregateRoot<Guid>",
+  "dbContextName": "CatalogDbContext",
   "properties": [
     {"name": "Name", "type": "string", "required": true, "maxLength": 200},
     {"name": "Price", "type": "decimal", "required": true}
-  ]
+  ],
+  "options": {
+    "generatePermissions": true,
+    "generateLocalization": true,
+    "advancedValidation": false,
+    "apiDocumentation": true,
+    "comprehensiveTests": false,
+    "auditLogging": false
+  }
 }
 ```
 
 **Long ID for High Performance:**
 ```json
 {
-  "entity": "Order",
-  "module": "Sales",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Sales",
+  "entityName": "Order",
+  "entityNamePlural": "Orders",
+  "baseClass": "AuditedAggregateRoot",
   "idType": "long",
-  "baseClass": "AuditedAggregateRoot<long>",
+  "dbContextName": "SalesDbContext",
   "properties": [
-    {"name": "OrderNumber", "type": "string", "required": true, "unique": true},
+    {"name": "OrderNumber", "type": "string", "required": true, "maxLength": 50},
     {"name": "TotalAmount", "type": "decimal", "required": true}
-  ]
+  ],
+  "options": {
+    "generatePermissions": true,
+    "generateLocalization": true,
+    "advancedValidation": true,
+    "apiDocumentation": true,
+    "comprehensiveTests": true,
+    "auditLogging": false
+  }
 }
 ```
+
+**See `entity-definitions/entity-with-long-id.json` for a complete example.**
 
 **Int ID for Simple Entities:**
 ```json
 {
-  "entity": "Category",
-  "module": "Catalog",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Catalog",
+  "entityName": "Category",
+  "entityNamePlural": "Categories",
+  "baseClass": "Entity",
   "idType": "int",
-  "baseClass": "Entity<int>",
+  "dbContextName": "CatalogDbContext",
   "properties": [
     {"name": "Name", "type": "string", "required": true, "maxLength": 128},
-    {"name": "DisplayOrder", "type": "int", "required": true, "default": 0}
-  ]
+    {"name": "DisplayOrder", "type": "int", "required": true, "defaultValue": "0"}
+  ],
+  "options": {
+    "generatePermissions": true,
+    "generateLocalization": true,
+    "advancedValidation": true,
+    "apiDocumentation": true,
+    "comprehensiveTests": false,
+    "auditLogging": false
+  }
 }
 ```
 
-**Soft Delete Entity:**
-```json
-{
-  "entity": "Product",
-  "module": "Catalog",
-  "idType": "Guid",
-  "baseClass": "FullAuditedAggregateRoot<Guid>, ISoftDelete",
-  "properties": [
-    {"name": "Name", "type": "string", "required": true, "maxLength": 200}
-  ]
-}
-```
+**See `entity-definitions/entity-with-int-id.json` for a complete example.**
 
 **Complete Examples:**
 
-See the example files in the `entity-definitions/` folder:
-- `simple-entity.json` - Basic entity with Guid ID and default base class
-- `entity-with-relations.json` - Entity with relationships (Guid ID)
-- `multi-tenant-entity.json` - Multi-tenant entity (Guid ID)
-- `entity-with-long-id.json` - Entity using long ID type for performance
-- `entity-with-int-id.json` - Entity using int ID type for simple scenarios
+See the example files in the `examples/` and `entity-definitions/` folders:
+
+**Examples Folder (Recommended - Full-featured):**
+- `examples/entity-advanced.json` - Complete example with all advanced features enabled (permissions, localization, validation, tests, audit logging)
+- `examples/entity-simple.json` - Minimal example with basic features only
+
+**Entity Definitions Folder (Various Scenarios):**
+- `entity-definitions/simple-entity.json` - Basic entity with Guid ID and default base class
+- `entity-definitions/entity-with-relations.json` - Entity with relationships (ManyToOne, OneToMany, ManyToMany)
+- `entity-definitions/multi-tenant-entity.json` - Multi-tenant entity with tenant-scoped relationships
+- `entity-definitions/entity-with-long-id.json` - Entity using long ID type for high-performance scenarios
+- `entity-with-int-id.json` - Entity using int ID type for simple lookup tables
 
 For more information about ABP entity base classes, see the [ABP Framework Entities Documentation](https://abp.io/docs/latest/framework/architecture/domain-driven-design/entities).
 
@@ -630,52 +1202,58 @@ For more information about ABP entity base classes, see the [ABP Framework Entit
 {
   "name": "Category",
   "type": "ManyToOne",
-  "entity": "Category",
+  "relatedEntity": "Category",
   "foreignKey": "CategoryId",
-  "required": true,
-  "tenantScoped": true
+  "required": true
 }
 ```
-- Adds foreign key to current entity
+- Adds foreign key property to current entity (must be defined in properties)
 - Creates navigation property
-- Applies tenant filtering if multi-tenant
+- Applies tenant filtering automatically if multi-tenant is detected
+
+**Note:** The foreign key property (e.g., `CategoryId`) must be defined in the `properties` array.
 
 #### OneToMany (1:N)
 ```json
 {
   "name": "Reviews",
   "type": "OneToMany",
-  "entity": "ProductReview",
+  "relatedEntity": "ProductReview",
   "foreignKey": "ProductId"
 }
 ```
-- Creates collection navigation property
-- Foreign key in related entity
+- Creates collection navigation property (`ICollection<ProductReview> Reviews`)
+- Foreign key is in the related entity (ProductReview.ProductId)
+- No foreign key property needed in current entity
 
 #### ManyToMany (N:M)
 ```json
 {
   "name": "Tags",
   "type": "ManyToMany",
-  "entity": "Tag",
+  "relatedEntity": "Tag",
   "joinTable": "ProductTags"
 }
 ```
-- Creates join table
+- Creates join table (`ProductTags`)
 - Both-way navigation properties
+- No foreign key properties needed
 
 #### OneToOne (1:1)
 ```json
 {
   "name": "Profile",
   "type": "OneToOne",
-  "entity": "UserProfile",
+  "relatedEntity": "UserProfile",
   "foreignKey": "ProfileId",
   "required": false
 }
 ```
 - Foreign key with unique constraint
 - Both-way navigation properties
+- Foreign key property must be defined in properties
+
+**See `entity-definitions/entity-with-relations.json` for complete examples of all relationship types.**
 
 ---
 
@@ -728,7 +1306,12 @@ abp/
 ├── abp-generator.ps1         # PowerShell script (Windows)
 ├── abp-gen                   # Universal launcher (Unix)
 ├── README.md                 # This file
-├── entity-definitions/       # JSON entity definitions
+├── JSON_SCHEMA.md            # Complete JSON schema documentation
+├── FEATURES.md               # Complete features list and implementation details
+├── examples/                 # Recommended example files (full-featured)
+│   ├── entity-advanced.json  # Complete example with all advanced features
+│   └── entity-simple.json    # Minimal example with basic features
+├── entity-definitions/       # JSON entity definitions (various scenarios)
 │   ├── simple-entity.json              # Simple entity with Guid ID (default)
 │   ├── entity-with-relations.json      # Entity with relationships (Guid ID)
 │   ├── multi-tenant-entity.json        # Multi-tenant entity (Guid ID)
@@ -830,34 +1413,91 @@ This allows the generator to remember your project settings.
 
 ### Example 1: E-Commerce Product Catalog
 
-**Create JSON:** `product.json`
+**Use the provided example:**
+```bash
+# Use the advanced example with all features
+./abp-generator.sh add-entity --from-json examples/entity-advanced.json
+
+# Or use the simple example
+./abp-generator.sh add-entity --from-json examples/entity-simple.json
+```
+
+**Or create custom JSON:** `product.json`
 ```json
 {
-  "entity": "Product",
-  "module": "Catalog",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Catalog",
+  "entityName": "Product",
+  "entityNamePlural": "Products",
+  "baseClass": "FullAuditedAggregateRoot",
   "idType": "Guid",
-  "baseClass": "FullAuditedAggregateRoot<Guid>",
+  "dbContextName": "CatalogDbContext",
   "properties": [
-    {"name": "Name", "type": "string", "required": true, "maxLength": 200},
-    {"name": "SKU", "type": "string", "required": true, "unique": true, "maxLength": 50},
-    {"name": "Price", "type": "decimal", "required": true, "range": {"min": 0}},
-    {"name": "Stock", "type": "int", "required": true, "default": 0},
-    {"name": "IsAvailable", "type": "bool", "required": true, "default": true}
+    {
+      "name": "Name",
+      "type": "string",
+      "required": true,
+      "maxLength": 200,
+      "validation": {
+        "pattern": "alphanumeric",
+        "asyncUnique": true
+      }
+    },
+    {
+      "name": "SKU",
+      "type": "string",
+      "required": true,
+      "maxLength": 50,
+      "validation": {
+        "pattern": "^[A-Z0-9-]+$",
+        "asyncUnique": true
+      }
+    },
+    {
+      "name": "Price",
+      "type": "decimal",
+      "required": true,
+      "validation": {
+        "min": 0
+      }
+    },
+    {
+      "name": "Stock",
+      "type": "int",
+      "required": true,
+      "defaultValue": "0",
+      "validation": {
+        "min": 0
+      }
+    },
+    {
+      "name": "IsAvailable",
+      "type": "bool",
+      "required": true,
+      "defaultValue": "true"
+    },
+    {
+      "name": "CategoryId",
+      "type": "Guid",
+      "required": true
+    }
   ],
   "relationships": [
     {
       "name": "Category",
       "type": "ManyToOne",
-      "entity": "Category",
+      "relatedEntity": "Category",
       "foreignKey": "CategoryId",
       "required": true
     }
   ],
   "options": {
-    "generateSeeder": true,
-    "generateTests": true,
-    "generateValidation": true,
-    "generateEvents": ["Created", "StockChanged", "PriceChanged"]
+    "generatePermissions": true,
+    "generateLocalization": true,
+    "advancedValidation": true,
+    "apiDocumentation": true,
+    "comprehensiveTests": true,
+    "auditLogging": true
   }
 }
 ```
@@ -869,39 +1509,79 @@ This allows the generator to remember your project settings.
 
 ### Example 2: Multi-Tenant Order System
 
-**Create JSON:** `order.json`
+**Use the provided example:**
+```bash
+./abp-generator.sh add-entity --from-json entity-definitions/multi-tenant-entity.json
+```
+
+**Or create custom JSON:** `order.json`
 ```json
 {
-  "entity": "Order",
-  "module": "Sales",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Sales",
+  "entityName": "Order",
+  "entityNamePlural": "Orders",
+  "baseClass": "FullAuditedAggregateRoot",
   "idType": "Guid",
-  "baseClass": "FullAuditedAggregateRoot<Guid>",
+  "dbContextName": "SalesDbContext",
   "properties": [
-    {"name": "OrderNumber", "type": "string", "required": true, "unique": true, "maxLength": 50},
-    {"name": "OrderDate", "type": "DateTime", "required": true},
-    {"name": "TotalAmount", "type": "decimal", "required": true},
-    {"name": "Status", "type": "string", "required": true, "maxLength": 50}
+    {
+      "name": "OrderNumber",
+      "type": "string",
+      "required": true,
+      "maxLength": 50,
+      "validation": {
+        "pattern": "^ORD-[0-9]{8}$",
+        "asyncUnique": true
+      }
+    },
+    {
+      "name": "OrderDate",
+      "type": "DateTime",
+      "required": true
+    },
+    {
+      "name": "TotalAmount",
+      "type": "decimal",
+      "required": true,
+      "validation": {
+        "min": 0
+      }
+    },
+    {
+      "name": "Status",
+      "type": "string",
+      "required": true,
+      "maxLength": 50
+    },
+    {
+      "name": "CustomerId",
+      "type": "Guid",
+      "required": true
+    }
   ],
   "relationships": [
     {
       "name": "Customer",
       "type": "ManyToOne",
-      "entity": "Customer",
+      "relatedEntity": "Customer",
       "foreignKey": "CustomerId",
-      "required": true,
-      "tenantScoped": true
+      "required": true
     },
     {
       "name": "OrderItems",
       "type": "OneToMany",
-      "entity": "OrderItem",
+      "relatedEntity": "OrderItem",
       "foreignKey": "OrderId"
     }
   ],
   "options": {
-    "generateSeeder": true,
-    "generateTests": true,
-    "multiTenant": true
+    "generatePermissions": true,
+    "generateLocalization": true,
+    "advancedValidation": true,
+    "apiDocumentation": true,
+    "comprehensiveTests": true,
+    "auditLogging": true
   }
 }
 ```

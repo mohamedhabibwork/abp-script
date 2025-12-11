@@ -95,7 +95,7 @@ namespace ${NAMESPACE}.${MODULE_NAME}
         /// <param name="context">The service configuration context.</param>
         public override void ConfigureServices(ServiceConfigurationContext context)
         {
-            context.Services.AddAbpDbContext<${MODULE_NAME}DbContext>(options =>
+            context.Services.AddAbpDbContext<${DB_CONTEXT_NAME}>(options =>
             {
                 // Add default repositories
                 options.AddDefaultRepositories(includeAllEntities: true);
@@ -109,7 +109,7 @@ namespace ${NAMESPACE}.${MODULE_NAME}
             // Configure database provider
             Configure<AbpDbContextOptions>(options =>
             {
-                options.Configure<${MODULE_NAME}DbContext>(c =>
+                options.Configure<${DB_CONTEXT_NAME}>(c =>
                 {
                     c.UseSqlServer();
                 });

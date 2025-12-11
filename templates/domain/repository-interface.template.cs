@@ -4,12 +4,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using Volo.Abp.Domain.Repositories;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.Repositories
+namespace ${NAMESPACE}.Domain.${MODULE_NAME}
 {
     /// <summary>
     /// Repository interface for <see cref="${ENTITY_NAME}"/>.
     /// </summary>
-    public interface I${ENTITY_NAME}Repository : IRepository<${ENTITY_NAME}, Guid>
+    public interface I${ENTITY_NAME}Repository : IRepository<${ENTITY_NAME}, ${ID_TYPE}>
     {
         /// <summary>
         /// Finds a ${ENTITY_NAME} by name.
@@ -68,7 +68,7 @@ namespace ${NAMESPACE}.${MODULE_NAME}.Repositories
         /// <returns>True if exists; otherwise, false.</returns>
         Task<bool> ExistsByNameAsync(
             string name,
-            Guid? excludeId = null,
+            ${ID_TYPE}? excludeId = null,
             CancellationToken cancellationToken = default);
     }
 }

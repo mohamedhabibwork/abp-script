@@ -3,7 +3,7 @@ using System.Threading.Tasks;
 using Volo.Abp.Application.Dtos;
 using Volo.Abp.Application.Services;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.Services
+namespace ${NAMESPACE}.Application.Contracts.${MODULE_NAME}
 {
     /// <summary>
     /// Application service interface for ${ENTITY_NAME} management.

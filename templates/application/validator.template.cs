@@ -1,6 +1,7 @@
 using FluentValidation;
+using ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.DTOs;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.Validators
+namespace ${NAMESPACE}.Application.${MODULE_NAME}.Validators
 {
     /// <summary>
     /// Validator for <see cref="Create${ENTITY_NAME}Dto"/>.

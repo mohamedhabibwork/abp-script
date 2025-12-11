@@ -1,7 +1,7 @@
 using System;
 using System.ComponentModel.DataAnnotations;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.DTOs
+namespace ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.DTOs
 {
     /// <summary>
     /// DTO for creating a new ${ENTITY_NAME}.

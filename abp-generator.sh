@@ -48,41 +48,356 @@ ENTITY_NAME=""
 TEMPLATE_TYPE=""
 IS_MULTITENANT=false
 ENTITY_BASE_CLASS="FullAuditedAggregateRoot<Guid>"
+ENTITY_ID_TYPE="Guid"
+DB_CONTEXT_NAME=""
+
 
 ################################################################################
-# SECTION 2: Utility Functions
+# SECTION 2A: Entity Tracking Functions
 ################################################################################
+
+get_tracking_file() {
+    if [ -z "$PROJECT_ROOT" ]; then
+        echo "${SCRIPT_DIR}/generated-entities.json"
+    else
+        echo "${PROJECT_ROOT}/generated-entities.json"
+    fi
+}
+
+get_tracked_entities() {
+    local tracking_file=$(get_tracking_file)
+    if [ -f "$tracking_file" ] && command -v jq &> /dev/null; then
+        jq -r '.entities // []' "$tracking_file" 2>/dev/null || echo "[]"
+    else
+        echo "[]"
+    fi
+}
+
+save_tracked_entities() {
+    local entities_json="$1"
+    local tracking_file=$(get_tracking_file)
+    local tracking_dir=$(dirname "$tracking_file")
+    
+    if [ ! -d "$tracking_dir" ]; then
+        mkdir -p "$tracking_dir"
+    fi
+    
+    if command -v jq &> /dev/null; then
+        echo "{\"entities\": $entities_json}" | jq '.' > "$tracking_file"
+    else
+        echo "{\"entities\": $entities_json}" > "$tracking_file"
+    fi
+}
+
+add_entity_tracking() {
+    local generated_files=("$@")
+    
+    local entities_json=$(get_tracked_entities)
+    if [ "$entities_json" = "[]" ] || [ -z "$entities_json" ]; then
+        entities_json="[]"
+    fi
+    
+    # Build relative paths
+    local relative_files="["
+    local first=true
+    for file in "${generated_files[@]}"; do
+        if [ -f "$file" ]; then
+            local relative_path="$file"
+            if [ -n "$PROJECT_ROOT" ]; then
+                relative_path=$(echo "$file" | sed "s|^${PROJECT_ROOT}/||")
+            fi
+            
+            if [ "$first" = true ]; then
+                first=false
+            else
+                relative_files+=","
+            fi
+            relative_files+="\"$relative_path\""
+        fi
+    done
+    relative_files+="]"
+    
+    # Add new entity
+    local new_entity=$(jq -n \
+        --arg name "$ENTITY_NAME" \
+        --arg module "$MODULE_NAME" \
+        --argjson files "$relative_files" \
+        '{name: $name, module: $module, generatedAt: now|todate, files: $files}')
+    
+    if command -v jq &> /dev/null; then
+        local updated_entities=$(echo "$entities_json" | jq ". + [$new_entity]")
+        save_tracked_entities "$updated_entities"
+    fi
+}
+
+remove_entity_tracking() {
+    local entity_name="$1"
+    local module_name="$2"
+    
+    local entities_json=$(get_tracked_entities)
+    if [ "$entities_json" = "[]" ] || [ -z "$entities_json" ]; then
+        return 1
+    fi
+    
+    if command -v jq &> /dev/null; then
+        local filtered=$(echo "$entities_json" | jq "[.[] | select(.name != \"$entity_name\" or .module != \"$module_name\")]")
+        save_tracked_entities "$filtered"
+        return 0
+    fi
+    return 1
+}
+
+get_entity_files() {
+    local entity_name="$1"
+    local module_name="$2"
+    
+    local entities_json=$(get_tracked_entities)
+    if [ "$entities_json" = "[]" ] || [ -z "$entities_json" ]; then
+        return
+    fi
+    
+    if command -v jq &> /dev/null; then
+        local entity=$(echo "$entities_json" | jq -r ".[] | select(.name == \"$entity_name\" and .module == \"$module_name\")")
+        if [ -n "$entity" ]; then
+            echo "$entity" | jq -r '.files[]?' | while read -r relative_file; do
+                if [ -n "$PROJECT_ROOT" ]; then
+                    echo "${PROJECT_ROOT}/${relative_file}"
+                else
+                    echo "$relative_file"
+                fi
+            done
+        fi
+    fi
+}
+
+rollback_last_entity() {
+    print_header "Rollback Last Generated Entity"
+    
+    local entities_json=$(get_tracked_entities)
+    if [ "$entities_json" = "[]" ] || [ -z "$entities_json" ]; then
+        log_warning "No tracked entities found."
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    if ! command -v jq &> /dev/null; then
+        log_error "jq is required for this operation"
+        return 1
+    fi
+    
+    local entity_count=$(echo "$entities_json" | jq 'length')
+    local last_entity=$(echo "$entities_json" | jq ".[$((entity_count - 1))]")
+    local entity_name=$(echo "$last_entity" | jq -r '.name')
+    local module_name=$(echo "$last_entity" | jq -r '.module')
+    local generated_at=$(echo "$last_entity" | jq -r '.generatedAt')
+    
+    echo "Last generated entity:"
+    echo "  Name: $entity_name"
+    echo "  Module: $module_name"
+    echo "  Generated: $generated_at"
+    echo ""
+    
+    read -p "Delete this entity and all its files? [y/N]: " confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        local files=($(get_entity_files "$entity_name" "$module_name"))
+        local deleted_count=0
+        for file in "${files[@]}"; do
+            if [ -f "$file" ]; then
+                rm -f "$file"
+                log_info "Deleted: $file"
+                deleted_count=$((deleted_count + 1))
+            fi
+        done
+        
+        remove_entity_tracking "$entity_name" "$module_name"
+        log_success "Rolled back entity '$entity_name'. Deleted $deleted_count files."
+    else
+        log_info "Rollback cancelled."
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
+delete_entity_by_name() {
+    print_header "Delete Entity by Name"
+    
+    local entities_json=$(get_tracked_entities)
+    if [ "$entities_json" = "[]" ] || [ -z "$entities_json" ]; then
+        log_warning "No tracked entities found."
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    if ! command -v jq &> /dev/null; then
+        log_error "jq is required for this operation"
+        return 1
+    fi
+    
+    echo "Available entities:"
+    echo "$entities_json" | jq -r '.[] | "  \(.name) (Module: \(.module))"'
+    echo ""
+    
+    read -p "Enter entity name: " entity_name
+    read -p "Enter module name: " module_name
+    
+    local entity=$(echo "$entities_json" | jq -r ".[] | select(.name == \"$entity_name\" and .module == \"$module_name\")")
+    if [ -z "$entity" ]; then
+        log_error "Entity '$entity_name' in module '$module_name' not found."
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    local file_count=$(echo "$entity" | jq '.files | length')
+    echo ""
+    echo "Entity to delete:"
+    echo "  Name: $entity_name"
+    echo "  Module: $module_name"
+    echo "  Files: $file_count"
+    echo ""
+    
+    read -p "Delete this entity and all its files? [y/N]: " confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        local files=($(get_entity_files "$entity_name" "$module_name"))
+        local deleted_count=0
+        for file in "${files[@]}"; do
+            if [ -f "$file" ]; then
+                rm -f "$file"
+                log_info "Deleted: $file"
+                deleted_count=$((deleted_count + 1))
+            fi
+        done
+        
+        remove_entity_tracking "$entity_name" "$module_name"
+        log_success "Deleted entity '$entity_name'. Removed $deleted_count files."
+    else
+        log_info "Deletion cancelled."
+    fi
+    
+    read -p "Press Enter to continue..."
+}
+
+list_generated_entities() {
+    print_header "List Generated Entities"
+    
+    local entities_json=$(get_tracked_entities)
+    if [ "$entities_json" = "[]" ] || [ -z "$entities_json" ]; then
+        log_warning "No tracked entities found."
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    if ! command -v jq &> /dev/null; then
+        log_error "jq is required for this operation"
+        return 1
+    fi
+    
+    local entity_count=$(echo "$entities_json" | jq 'length')
+    echo "Generated Entities ($entity_count):"
+    echo ""
+    echo "$entities_json" | jq -r '.[] | "  \(.name) (Module: \(.module))\n      Generated: \(.generatedAt)\n      Files: \(.files | length)\n"'
+    
+    read -p "Press Enter to continue..."
+}
+
+clean_all_generated_files() {
+    print_header "Clean All Generated Files"
+    
+    local entities_json=$(get_tracked_entities)
+    if [ "$entities_json" = "[]" ] || [ -z "$entities_json" ]; then
+        log_warning "No tracked entities found."
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    if ! command -v jq &> /dev/null; then
+        log_error "jq is required for this operation"
+        return 1
+    fi
+    
+    local entity_count=$(echo "$entities_json" | jq 'length')
+    local total_files=$(echo "$entities_json" | jq '[.[] | .files | length] | add')
+    
+    echo "This will delete ALL tracked entities and their files:"
+    echo "  Total entities: $entity_count"
+    echo "  Total files: $total_files"
+    echo ""
+    
+    read -p "Are you sure? Type 'DELETE ALL' to confirm: " confirm
+    if [ "$confirm" = "DELETE ALL" ]; then
+        local deleted_count=0
+        echo "$entities_json" | jq -r '.[] | "\(.name)|\(.module)"' | while IFS='|' read -r entity_name module_name; do
+            local files=($(get_entity_files "$entity_name" "$module_name"))
+            for file in "${files[@]}"; do
+                if [ -f "$file" ]; then
+                    rm -f "$file"
+                    deleted_count=$((deleted_count + 1))
+                fi
+            done
+        done
+        
+        local tracking_file=$(get_tracking_file)
+        if [ -f "$tracking_file" ]; then
+            rm -f "$tracking_file"
+        fi
+        
+        log_success "Cleaned all generated files. Deleted $deleted_count files."
+    else
+        log_info "Cleanup cancelled."
+    fi
+    
+    read -p "Press Enter to continue..."
+}
 
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e "${CYAN}ℹ️  ${NC}${BLUE}$1${NC}"
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    echo -e "${GREEN}✅ $1${NC}"
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    echo -e "${YELLOW}⚠️  $1${NC}"
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}❌ $1${NC}"
 }
 
 log_step() {
-    echo -e "${MAGENTA}[STEP]${NC} $1"
+    echo -e "${MAGENTA}🔄 $1${NC}"
+}
+
+log_progress() {
+    local message=$1
+    local current=$2
+    local total=$3
+    local percentage=$((current * 100 / total))
+    local filled=$((percentage / 5))
+    local empty=$((20 - filled))
+    local bar=$(printf '=%.0s' $(seq 1 $filled))$(printf ' %.0s' $(seq 1 $empty))
+    echo -e "${CYAN}⏳ [${bar}] ${percentage}% ${NC}${YELLOW}(${current}/${total})${NC} $message"
 }
 
 print_header() {
+    local message="$1"
+    local padding=$((68 - ${#message}))
     echo ""
-    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}  $1${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
+    printf "${CYAN}║  ${NC}%-68s${CYAN}║${NC}\n" "$message"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 }
 
 print_separator() {
-    echo -e "${CYAN}───────────────────────────────────────────────────────────────${NC}"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────────────────${NC}"
+}
+
+print_section_header() {
+    local title="$1"
+    echo ""
+    echo -e "${CYAN}▶ ${NC}$title"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────────────────${NC}"
 }
 
 check_dependencies() {
@@ -215,6 +530,13 @@ parse_json_entity() {
         ENTITY_ID_TYPE="Guid"
     fi
     
+    # Parse DbContext name if provided
+    if jq -e '.dbContext' "$json_file" > /dev/null 2>&1; then
+        DB_CONTEXT_NAME=$(jq -r '.dbContext' "$json_file")
+    else
+        DB_CONTEXT_NAME="${MODULE_NAME}DbContext"
+    fi
+    
     # Update base class with ID type if it contains <Guid>
     ENTITY_BASE_CLASS=$(echo "$ENTITY_BASE_CLASS" | sed "s/<Guid>/<$ENTITY_ID_TYPE>/g")
     
@@ -252,6 +574,7 @@ generate_property_declaration() {
     local name=$(echo "$property_json" | jq -r '.name')
     local type=$(echo "$property_json" | jq -r '.type')
     local required=$(echo "$property_json" | jq -r '.required // false')
+    local nullable=$(echo "$property_json" | jq -r '.nullable // false')
     local max_length=$(echo "$property_json" | jq -r '.maxLength // ""')
     
     local declaration=""
@@ -265,8 +588,23 @@ generate_property_declaration() {
         declaration+="[StringLength($max_length)]\n    "
     fi
     
+    # Make type nullable if required is false or nullable is explicitly true
+    # For value types (int, long, decimal, bool, DateTime, Guid), use nullable version
+    local final_type="$type"
+    if [ "$required" != "true" ] || [ "$nullable" = "true" ]; then
+        case "$type" in
+            int|long|decimal|double|float|bool|DateTime|Guid)
+                final_type="${type}?"
+                ;;
+            string)
+                # string is already nullable, but we can make it explicitly nullable
+                final_type="string?"
+                ;;
+        esac
+    fi
+    
     # Add property
-    declaration+="public $type $name { get; set; }"
+    declaration+="public $final_type $name { get; set; }"
     
     echo -e "$declaration"
 }
@@ -317,6 +655,14 @@ collect_properties_interactive() {
         local is_required=false
         [[ "$prop_required" =~ ^[Yy]$ ]] && is_required=true
         
+        # Nullable (only if not required)
+        local is_nullable=false
+        if [ "$is_required" != "true" ]; then
+            read -p "  Nullable [Y/n]: " prop_nullable
+            prop_nullable=${prop_nullable:-Y}
+            [[ "$prop_nullable" =~ ^[Yy]$ ]] && is_nullable=true
+        fi
+        
         # Max length (for strings)
         local max_length=""
         if [ "$prop_type" = "string" ]; then
@@ -338,7 +684,7 @@ collect_properties_interactive() {
         fi
         
         # Build JSON object
-        local prop_json="{\"name\":\"$prop_name\",\"type\":\"$prop_type\",\"required\":$is_required"
+        local prop_json="{\"name\":\"$prop_name\",\"type\":\"$prop_type\",\"required\":$is_required,\"nullable\":$is_nullable"
         
         [ -n "$max_length" ] && prop_json="$prop_json,\"maxLength\":$max_length"
         [ -n "$min_length" ] && prop_json="$prop_json,\"minLength\":$min_length"
@@ -404,11 +750,13 @@ collect_relationships_interactive() {
         done
         
         # Relationship type
-        echo "  Type:"
+        echo ""
+        echo "  Relationship Type:"
         echo "    1) ManyToOne   (N:1 - e.g., Product → Category)"
         echo "    2) OneToMany   (1:N - e.g., Category → Products)"
         echo "    3) ManyToMany  (N:M - e.g., Product ↔ Tags)"
         echo "    4) OneToOne    (1:1 - e.g., User → Profile)"
+        echo ""
         local rel_type_choice=""
         local rel_type=""
         while [ -z "$rel_type_choice" ]; do
@@ -731,6 +1079,45 @@ generate_entity_from_json() {
         generate_validation_files
     fi
     
+    # Collect generated files for tracking
+    local generated_files=()
+    
+    # Entity files
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/${ENTITY_NAME}.cs")
+    
+    # DTO files
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Create${ENTITY_NAME}Dto.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Update${ENTITY_NAME}Dto.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/${ENTITY_NAME}Dto.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Get${ENTITY_NAME}ListInput.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/${ENTITY_NAME}LookupDto.cs")
+    
+    # Repository files
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/I${ENTITY_NAME}Repository.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}/Repositories/EfCore${ENTITY_NAME}Repository.cs")
+    
+    # Service files
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/I${ENTITY_NAME}AppService.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application/${MODULE_NAME}/${ENTITY_NAME}AppService.cs")
+    
+    # Controller files
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.HttpApi/${MODULE_NAME}/Controllers/${ENTITY_NAME}Controller.cs")
+    
+    # Optional files
+    if [ "$generate_seeder" = "true" ]; then
+        generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}/${ENTITY_NAME}DataSeeder.cs")
+    fi
+    if [ "$generate_validation" = "true" ]; then
+        generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application/${MODULE_NAME}/Validators/${ENTITY_NAME}Validator.cs")
+    fi
+    if [ "$generate_tests" = "true" ]; then
+        generated_files+=("${PROJECT_ROOT}/test/${NAMESPACE}.Application.Tests/${MODULE_NAME}/${ENTITY_NAME}AppServiceTests.cs")
+        generated_files+=("${PROJECT_ROOT}/test/${NAMESPACE}.Domain.Tests/${MODULE_NAME}/${ENTITY_NAME}DomainTests.cs")
+    fi
+    
+    # Track the generated entity
+    add_entity_tracking "${generated_files[@]}"
+    
     log_success "Entity generation complete!"
 }
 
@@ -774,6 +1161,31 @@ generate_entity_files() {
 using Volo.Abp;"
     fi
     
+    # Check if properties have validation attributes
+    local has_validation_attributes=false
+    if command -v jq &> /dev/null && [ "$properties" != "[]" ] && [ -n "$properties" ]; then
+        local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+        for ((i=0; i<prop_count; i++)); do
+            local prop=$(echo "$properties" | jq ".[$i]")
+            local required=$(echo "$prop" | jq -r '.required // false')
+            local nullable=$(echo "$prop" | jq -r '.nullable // false')
+            local max_length=$(echo "$prop" | jq -r '.maxLength // ""')
+            local min_length=$(echo "$prop" | jq -r '.minLength // ""')
+            
+            if [ "$required" = "true" ] || [ "$nullable" = "true" ] || ([ -n "$max_length" ] && [ "$max_length" != "null" ]) || ([ -n "$min_length" ] && [ "$min_length" != "null" ]); then
+                has_validation_attributes=true
+                break
+            fi
+        done
+    fi
+    
+    # Add DataAnnotations using only if validation attributes are present
+    local data_annotations_using=""
+    if [ "$has_validation_attributes" = true ]; then
+        data_annotations_using="
+using System.ComponentModel.DataAnnotations;"
+    fi
+    
     local template_file="${TEMPLATES_DIR}/domain/entity.template.cs"
     local output_file="${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/${ENTITY_NAME}.cs"
     
@@ -786,6 +1198,7 @@ using Volo.Abp;"
         "ID_TYPE=$ENTITY_ID_TYPE" \
         "BASE_CLASS_CONSTRUCTOR=$base_class_constructor" \
         "ID_ASSIGNMENT=$id_assignment" \
+        "DATA_ANNOTATIONS_USING=$data_annotations_using" \
         "SOFT_DELETE_USING=$soft_delete_using"
 }
 
@@ -794,29 +1207,45 @@ generate_dto_files() {
     
     log_step "Generating DTO files..."
     
-    # Create DTO
+    # Create DTO (in Contracts)
     process_template_with_properties \
         "${TEMPLATES_DIR}/application/dto-create.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Application/DTOs/Create${ENTITY_NAME}Dto.cs" \
+        "${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Create${ENTITY_NAME}Dto.cs" \
         "$properties" \
         "NAMESPACE=$NAMESPACE" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME"
     
-    # Update DTO
+    # Update DTO (in Contracts)
     process_template_with_properties \
         "${TEMPLATES_DIR}/application/dto-update.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Application/DTOs/Update${ENTITY_NAME}Dto.cs" \
+        "${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Update${ENTITY_NAME}Dto.cs" \
         "$properties" \
         "NAMESPACE=$NAMESPACE" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME"
     
-    # Entity DTO
+    # Entity DTO (in Contracts)
     process_template_with_properties \
         "${TEMPLATES_DIR}/application/dto-entity.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Application/DTOs/${ENTITY_NAME}Dto.cs" \
+        "${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/${ENTITY_NAME}Dto.cs" \
         "$properties" \
+        "NAMESPACE=$NAMESPACE" \
+        "MODULE_NAME=$MODULE_NAME" \
+        "ENTITY_NAME=$ENTITY_NAME"
+    
+    # List Input DTO (in Contracts)
+    process_template \
+        "${TEMPLATES_DIR}/application/dto-list-input.template.cs" \
+        "${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Get${ENTITY_NAME}ListInput.cs" \
+        "NAMESPACE=$NAMESPACE" \
+        "MODULE_NAME=$MODULE_NAME" \
+        "ENTITY_NAME=$ENTITY_NAME"
+    
+    # Lookup DTO (in Contracts)
+    process_template \
+        "${TEMPLATES_DIR}/application/dto-lookup.template.cs" \
+        "${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/${ENTITY_NAME}LookupDto.cs" \
         "NAMESPACE=$NAMESPACE" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME"
@@ -827,6 +1256,11 @@ generate_repository_files() {
     
     local entity_name_lower="$(echo ${ENTITY_NAME:0:1} | tr '[:upper:]' '[:lower:]')${ENTITY_NAME:1}"
     
+    # Use selected DbContext or default to module name
+    if [ -z "$DB_CONTEXT_NAME" ]; then
+        DB_CONTEXT_NAME="${MODULE_NAME}DbContext"
+    fi
+    
     # Repository interface
     process_template \
         "${TEMPLATES_DIR}/domain/repository-interface.template.cs" \
@@ -834,16 +1268,19 @@ generate_repository_files() {
         "NAMESPACE=$NAMESPACE" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
-        "ENTITY_NAME_LOWER=$entity_name_lower"
+        "ENTITY_NAME_LOWER=$entity_name_lower" \
+        "ID_TYPE=$ENTITY_ID_TYPE"
     
     # EF Repository
     process_template \
         "${TEMPLATES_DIR}/infrastructure/ef-repository.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}/EfCore${ENTITY_NAME}Repository.cs" \
+        "${PROJECT_ROOT}/src/${NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}/Repositories/EfCore${ENTITY_NAME}Repository.cs" \
         "NAMESPACE=$NAMESPACE" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
-        "ENTITY_NAME_LOWER=$entity_name_lower"
+        "ENTITY_NAME_LOWER=$entity_name_lower" \
+        "ID_TYPE=$ENTITY_ID_TYPE" \
+        "DB_CONTEXT_NAME=$DB_CONTEXT_NAME"
 }
 
 generate_service_files() {
@@ -883,7 +1320,7 @@ generate_controller_files() {
     
     process_template \
         "${TEMPLATES_DIR}/api/controller-crud.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.HttpApi/Controllers/${ENTITY_NAME}Controller.cs" \
+        "${PROJECT_ROOT}/src/${NAMESPACE}.HttpApi/${MODULE_NAME}/Controllers/${ENTITY_NAME}Controller.cs" \
         "NAMESPACE=$NAMESPACE" \
         "MODULE_NAME=$MODULE_NAME" \
         "MODULE_NAME_LOWER=$module_name_lower" \
@@ -915,7 +1352,7 @@ generate_validation_files() {
     
     process_template \
         "${TEMPLATES_DIR}/application/validator.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Application/${MODULE_NAME}/${ENTITY_NAME}Validator.cs" \
+        "${PROJECT_ROOT}/src/${NAMESPACE}.Application/${MODULE_NAME}/Validators/${ENTITY_NAME}Validator.cs" \
         "NAMESPACE=$NAMESPACE" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
@@ -952,6 +1389,155 @@ generate_test_files() {
 ################################################################################
 # SECTION 9: Interactive Entity Generation
 ################################################################################
+
+get_abp_entity_base_classes() {
+    local id_type=${1:-Guid}
+    
+    echo "Entity<$id_type>|Basic entity"
+    echo "AggregateRoot<$id_type>|Aggregate root"
+    echo "BasicAggregateRoot<$id_type>|Simplified aggregate root"
+    echo "CreationAuditedEntity<$id_type>|Entity with creation audit"
+    echo "CreationAuditedAggregateRoot<$id_type>|Aggregate root with creation audit"
+    echo "AuditedEntity<$id_type>|Entity with creation and modification audit"
+    echo "AuditedAggregateRoot<$id_type>|Aggregate root with creation and modification audit"
+    echo "FullAuditedEntity<$id_type>|Entity with full audit (creation, modification, deletion)"
+    echo "FullAuditedAggregateRoot<$id_type>|Aggregate root with full audit (default)"
+    echo "CreationAuditedEntity<$id_type>, ISoftDelete|Entity with creation audit and soft delete"
+    echo "CreationAuditedAggregateRoot<$id_type>, ISoftDelete|Aggregate root with creation audit and soft delete"
+    echo "AuditedEntity<$id_type>, ISoftDelete|Entity with audit and soft delete"
+    echo "AuditedAggregateRoot<$id_type>, ISoftDelete|Aggregate root with audit and soft delete"
+    echo "FullAuditedEntity<$id_type>, ISoftDelete|Entity with full audit and soft delete"
+    echo "FullAuditedAggregateRoot<$id_type>, ISoftDelete|Aggregate root with full audit and soft delete"
+}
+
+select_entity_id_type() {
+    echo ""
+    echo "Select entity ID type:"
+    echo ""
+    echo "  1) Guid (default) - Globally unique identifier"
+    echo "  2) long - 64-bit integer"
+    echo "  3) int - 32-bit integer"
+    echo ""
+    
+    read -p "Enter choice [1-3] (default: 1): " choice
+    choice=${choice:-1}
+    
+    case $choice in
+        1)
+            ENTITY_ID_TYPE="Guid"
+            log_info "Selected ID type: Guid"
+            ;;
+        2)
+            ENTITY_ID_TYPE="long"
+            log_info "Selected ID type: long"
+            ;;
+        3)
+            ENTITY_ID_TYPE="int"
+            log_info "Selected ID type: int"
+            ;;
+        *)
+            log_error "Invalid choice, using default: Guid"
+            ENTITY_ID_TYPE="Guid"
+            ;;
+    esac
+}
+
+select_entity_base_class() {
+    echo ""
+    echo "Select entity base class:"
+    echo ""
+    
+    local base_classes=$(get_abp_entity_base_classes "$ENTITY_ID_TYPE")
+    local index=1
+    local default_index=9
+    
+    while IFS='|' read -r name description; do
+        if [ $index -eq $default_index ]; then
+            echo "  $index) $name (default)"
+        else
+            echo "  $index) $name"
+        fi
+        echo "     $description"
+        index=$((index + 1))
+    done <<< "$base_classes"
+    
+    echo ""
+    read -p "Enter choice [1-$((index - 1))] (default: $default_index): " choice
+    choice=${choice:-$default_index}
+    
+    local selected_index=1
+    while IFS='|' read -r name description; do
+        if [ $selected_index -eq $choice ]; then
+            ENTITY_BASE_CLASS="$name"
+            log_info "Selected base class: $ENTITY_BASE_CLASS"
+            return 0
+        fi
+        selected_index=$((selected_index + 1))
+    done <<< "$base_classes"
+    
+    # Default fallback
+    ENTITY_BASE_CLASS="FullAuditedAggregateRoot<$ENTITY_ID_TYPE>"
+    log_error "Invalid choice, using default: $ENTITY_BASE_CLASS"
+}
+
+select_db_context() {
+    echo ""
+    echo "Select DbContext:"
+    echo ""
+    
+    # Try to auto-detect DbContext files
+    local db_context_files=()
+    if [ -n "$PROJECT_ROOT" ] && [ -d "$PROJECT_ROOT" ]; then
+        while IFS= read -r file; do
+            if [ -n "$file" ] && [[ "$file" != *"/bin/"* ]] && [[ "$file" != *"/obj/"* ]]; then
+                db_context_files+=("$file")
+            fi
+        done < <(find "$PROJECT_ROOT" -name "*DbContext.cs" -type f 2>/dev/null)
+    fi
+    
+    if [ ${#db_context_files[@]} -gt 0 ]; then
+        echo "Found DbContext files:"
+        local i=1
+        for file in "${db_context_files[@]}"; do
+            local db_context_name=$(basename "$file" .cs)
+            echo "  $i) $db_context_name"
+            i=$((i + 1))
+        done
+        echo "  $i) Use module name: ${MODULE_NAME}DbContext (default)"
+        echo "  $((i + 1))) Enter custom DbContext name"
+        echo ""
+        
+        read -p "Enter choice [1-$((i + 1))] (default: $i): " choice
+        choice=${choice:-$i}
+        
+        if [ "$choice" -ge 1 ] && [ "$choice" -le ${#db_context_files[@]} ]; then
+            local selected_file="${db_context_files[$((choice - 1))]}"
+            DB_CONTEXT_NAME=$(basename "$selected_file" .cs)
+            log_info "Selected DbContext: $DB_CONTEXT_NAME"
+            return 0
+        elif [ "$choice" -eq $i ]; then
+            DB_CONTEXT_NAME="${MODULE_NAME}DbContext"
+            log_info "Using module DbContext: $DB_CONTEXT_NAME"
+            return 0
+        elif [ "$choice" -eq $((i + 1)) ]; then
+            read -p "Enter DbContext name: " custom_name
+            if [ -n "$custom_name" ]; then
+                DB_CONTEXT_NAME="$custom_name"
+                log_info "Using custom DbContext: $DB_CONTEXT_NAME"
+                return 0
+            fi
+        fi
+    else
+        echo "No DbContext files found. Using module name: ${MODULE_NAME}DbContext"
+        DB_CONTEXT_NAME="${MODULE_NAME}DbContext"
+        return 0
+    fi
+    
+    # Default fallback
+    DB_CONTEXT_NAME="${MODULE_NAME}DbContext"
+    log_info "Using default DbContext: $DB_CONTEXT_NAME"
+    return 0
+}
 
 generate_entity_interactive() {
     log_step "Interactive entity generation"
@@ -999,6 +1585,9 @@ generate_entity_interactive() {
     # Select base class (will use selected ID type)
     select_entity_base_class
     
+    # Select DbContext
+    select_db_context
+    
     # Collect properties interactively
     log_info "Let's define the entity properties..."
     local properties=$(collect_properties_interactive)
@@ -1036,67 +1625,74 @@ show_main_menu() {
     clear
     print_header "ABP Framework Project & Module Generator v1.0"
     
-    echo "Select an operation:"
+    echo -e "${CYAN}🎯 ${NC}Select an operation:"
+    print_separator
+    
+    print_section_header "PROJECT MANAGEMENT"
+    echo -e "  1️⃣  Create New ABP Project"
+    echo -e "  2️⃣  Create New Module"
+    echo -e "  3️⃣  Create New Package"
+    echo -e "  4️⃣  Initialize Solution"
+    echo -e "  5️⃣  Update Solution"
+    echo -e "  6️⃣  Upgrade Solution"
+    echo -e "  7️⃣  Clean Solution"
     echo ""
-    echo "PROJECT MANAGEMENT:"
-    echo "  1) Create New ABP Project"
-    echo "  2) Create New Module"
-    echo "  3) Create New Package"
-    echo "  4) Initialize Solution"
-    echo "  5) Update Solution"
-    echo "  6) Upgrade Solution"
-    echo "  7) Clean Solution"
+    print_section_header "MODULE & PACKAGE MANAGEMENT"
+    echo -e "  8️⃣  Add Package"
+    echo -e "  9️⃣  Add Package Reference"
+    echo -e "  🔟 Install Module"
+    echo -e "  1️⃣  1️⃣ Install Local Module"
+    echo -e "  1️⃣  2️⃣ List Modules"
+    echo -e "  1️⃣  3️⃣ List Templates"
     echo ""
-    echo "MODULE & PACKAGE MANAGEMENT:"
-    echo "  8) Add Package"
-    echo "  9) Add Package Reference"
-    echo " 10) Install Module"
-    echo " 11) Install Local Module"
-    echo " 12) List Modules"
-    echo " 13) List Templates"
+    print_section_header "SOURCE CODE MANAGEMENT"
+    echo -e "  1️⃣  4️⃣ Get Module Source"
+    echo -e "  1️⃣  5️⃣ Add Source Code"
+    echo -e "  1️⃣  6️⃣ List Module Sources"
+    echo -e "  1️⃣  7️⃣ Add Module Source"
+    echo -e "  1️⃣  8️⃣ Delete Module Source"
     echo ""
-    echo "SOURCE CODE MANAGEMENT:"
-    echo " 14) Get Module Source"
-    echo " 15) Add Source Code"
-    echo " 16) List Module Sources"
-    echo " 17) Add Module Source"
-    echo " 18) Delete Module Source"
+    print_section_header "PROXY GENERATION"
+    echo -e "  1️⃣  9️⃣ Generate Proxy"
+    echo -e "  2️⃣  0️⃣ Remove Proxy"
     echo ""
-    echo "PROXY GENERATION:"
-    echo " 19) Generate Proxy"
-    echo " 20) Remove Proxy"
+    print_section_header "VERSION MANAGEMENT"
+    echo -e "  2️⃣  1️⃣ Switch to Preview"
+    echo -e "  2️⃣  2️⃣ Switch to Nightly"
+    echo -e "  2️⃣  3️⃣ Switch to Stable"
+    echo -e "  2️⃣  4️⃣ Switch to Local"
     echo ""
-    echo "VERSION MANAGEMENT:"
-    echo " 21) Switch to Preview"
-    echo " 22) Switch to Nightly"
-    echo " 23) Switch to Stable"
-    echo " 24) Switch to Local"
+    print_section_header "🎨 ENTITY GENERATION (Custom)"
+    echo -e "  ${GREEN}2️⃣  5️⃣ Add Entity with CRUD${NC}"
+    echo -e "  ${GREEN}2️⃣  6️⃣ Generate from JSON${NC}"
     echo ""
-    echo "ENTITY GENERATION (Custom):"
-    echo " 25) Add Entity with CRUD"
-    echo " 26) Generate from JSON"
+    print_section_header "🗑️  ENTITY CLEANUP"
+    echo -e "  ${YELLOW}3️⃣  9️⃣ Rollback Last Generated Entity${NC}"
+    echo -e "  ${YELLOW}4️⃣  0️⃣ Delete Entity by Name${NC}"
+    echo -e "  ${CYAN}4️⃣  1️⃣ List Generated Entities${NC}"
+    echo -e "  ${RED}4️⃣  2️⃣ Clean All Generated Files${NC}"
     echo ""
-    echo "AUTHENTICATION:"
-    echo " 27) Login"
-    echo " 28) Login Info"
-    echo " 29) Logout"
+    print_section_header "AUTHENTICATION"
+    echo -e "  2️⃣  7️⃣ Login"
+    echo -e "  2️⃣  8️⃣ Login Info"
+    echo -e "  2️⃣  9️⃣ Logout"
     echo ""
-    echo "BUILD & BUNDLE:"
-    echo " 30) Bundle (Blazor/MAUI)"
-    echo " 31) Install Libs"
+    print_section_header "BUILD & BUNDLE"
+    echo -e "  3️⃣  0️⃣ Bundle (Blazor/MAUI)"
+    echo -e "  3️⃣  1️⃣ Install Libs"
     echo ""
-    echo "LOCALIZATION:"
-    echo " 32) Translate"
+    print_section_header "LOCALIZATION"
+    echo -e "  3️⃣  2️⃣ Translate"
     echo ""
-    echo "UTILITIES:"
-    echo " 33) Check Extensions"
-    echo " 34) Install Old CLI"
-    echo " 35) Generate Razor Page"
-    echo " 36) Check Dependencies"
-    echo " 37) ABP Help"
-    echo " 38) ABP CLI Info"
+    print_section_header "UTILITIES"
+    echo -e "  3️⃣  3️⃣ Check Extensions"
+    echo -e "  3️⃣  4️⃣ Install Old CLI"
+    echo -e "  3️⃣  5️⃣ Generate Razor Page"
+    echo -e "  3️⃣  6️⃣ Check Dependencies"
+    echo -e "  3️⃣  7️⃣ ABP Help"
+    echo -e "  3️⃣  8️⃣ ABP CLI Info"
     echo ""
-    echo " 99) Exit"
+    echo -e "  ${RED}9️⃣  9️⃣ Exit${NC}"
     echo ""
     print_separator
     
@@ -1296,15 +1892,66 @@ parse_cli_args() {
                 exit 1
             fi
             
-            log_info "Executing: abp $operation $*"
-            if abp "$operation" "$@"; then
-                log_success "Command completed successfully"
-            else
-                log_error "Command failed with exit code $?"
-                echo ""
-            show_usage
-            exit 1
+            # Special handling for update command
+            if [ "$operation" = "update" ]; then
+                local has_solution_name=false
+                local args=("$@")
+                
+                for ((i=0; i<${#args[@]}; i++)); do
+                    if [ "${args[i]}" = "--solution-name" ] || [ "${args[i]}" = "-sn" ] || [ "${args[i]}" = "--sn" ]; then
+                        has_solution_name=true
+                        break
+                    fi
+                done
+                
+                if [ "$has_solution_name" = false ]; then
+                    local sln_files=$(find . -maxdepth 1 -name "*.sln" -type f 2>/dev/null)
+                    if [ -z "$sln_files" ]; then
+                        log_error "No solution name provided and no .sln file found in current directory."
+                        log_info "Please either:"
+                        log_info "  1. Provide --solution-name parameter"
+                        log_info "  2. Run the command from within a solution directory"
+                        exit 1
+                    fi
+                    
+                    # Auto-detect solution name from .sln file (use first one if multiple exist)
+                    local first_sln=$(echo "$sln_files" | head -n1)
+                    local detected_solution_name=$(basename "$first_sln" .sln)
+                    log_info "Auto-detected solution name: $detected_solution_name"
+                    
+                    # Add solution name to arguments
+                    set -- "$operation" --solution-name "$detected_solution_name" "$@"
+                fi
             fi
+            
+            log_info "Executing: abp $operation $*"
+            
+            # Execute with proper error handling (temporarily disable set -e)
+            set +e  # Don't exit on error
+            abp "$operation" "$@" 2>&1
+            local exit_code=$?
+            set -e  # Re-enable exit on error
+            
+            case $exit_code in
+                0)
+                    log_success "Command completed successfully"
+                    ;;
+                134|6)
+                    # Abort trap (SIGABRT) - usually indicates a crash
+                    log_error "ABP CLI crashed (Abort trap: 6, exit code: $exit_code)"
+                    log_error "This may indicate invalid arguments, missing files, or corrupted installation."
+                    log_info "Try running the command directly: abp $operation $*"
+                    echo ""
+                    show_usage
+                    exit 1
+                    ;;
+                *)
+                    log_error "Command failed with exit code $exit_code"
+                    echo ""
+                    show_usage
+                    exit 1
+                    ;;
+            esac
             ;;
     esac
 }
@@ -1424,6 +2071,12 @@ show_usage() {
     echo "  ./abp-generator.sh add-entity --from-json <file.json>"
     echo "  ./abp-generator.sh add-entity --module <module> --name <name>"
     echo ""
+    echo "ENTITY CLEANUP:"
+    echo "  ./abp-generator.sh rollback"
+    echo "  ./abp-generator.sh delete-entity --name <entity>"
+    echo "  ./abp-generator.sh list-entities"
+    echo "  ./abp-generator.sh clean-all"
+    echo ""
     echo "AUTHENTICATION:"
     echo "  ./abp-generator.sh login [--username <user>] [--password <pass>]"
     echo "  ./abp-generator.sh login-info"
@@ -1448,12 +2101,14 @@ show_usage() {
     echo "  ./abp-generator.sh kube-intercept --service <name>"
     echo ""
     echo "Examples:"
+    echo "  ./abp-generator.sh                                          # Interactive mode"
     echo "  ./abp-generator.sh create-project --name MyApp --template app"
-    echo "  ./abp-generator.sh new --name MyApp --template app --database-provider ef"
     echo "  ./abp-generator.sh add-entity --from-json product.json"
+    echo "  ./abp-generator.sh list-entities                           # List generated entities"
+    echo "  ./abp-generator.sh rollback                                # Undo last entity"
     echo "  ./abp-generator.sh install-module --solution-name MyApp --module Volo.Blogging"
-    echo "  ./abp-generator.sh login"
-    echo "  ./abp-generator.sh help new"
+    echo ""
+    echo "For more information, visit: https://abp.io/docs/latest/cli"
 }
 
 ################################################################################
@@ -1470,15 +2125,53 @@ execute_abp_command() {
         return 1
     fi
     
-    log_info "Executing: abp $command ${args[*]}"
-    
-    if abp "$command" "${args[@]}"; then
-        log_success "Command completed successfully"
-        return 0
-    else
-        log_error "Command failed with exit code $?"
+    # Validate command is not empty
+    if [ -z "$command" ]; then
+        log_error "Command cannot be empty"
         return 1
     fi
+    
+    # Filter out empty arguments to prevent issues
+    local filtered_args=()
+    for arg in "${args[@]}"; do
+        # Only add non-empty arguments
+        if [ -n "$arg" ] && [ "$arg" != "" ]; then
+            filtered_args+=("$arg")
+        fi
+    done
+    
+    log_info "Executing: abp $command ${filtered_args[*]}"
+    
+    # Execute with proper error handling (temporarily disable set -e)
+    set +e  # Don't exit on error
+    abp "$command" "${filtered_args[@]}" 2>&1
+    local exit_code=$?
+    set -e  # Re-enable exit on error
+    
+    # Handle different exit codes
+    case $exit_code in
+        0)
+            log_success "Command completed successfully"
+            return 0
+            ;;
+        134|6)
+            # Abort trap (SIGABRT) - usually indicates a crash
+            log_error "ABP CLI crashed (Abort trap: 6, exit code: $exit_code)"
+            log_error "This may indicate:"
+            log_error "  1. Invalid arguments or parameters"
+            log_error "  2. Missing required files or directories"
+            log_error "  3. Corrupted ABP CLI installation"
+            log_error "  4. Missing solution name when required"
+            log_info "Try running the command directly to see full error:"
+            log_info "  abp $command ${filtered_args[*]}"
+            log_info "Or reinstall ABP CLI: dotnet tool update -g Volo.Abp.Cli"
+            return 1
+            ;;
+        *)
+            log_error "Command failed with exit code $exit_code"
+            return 1
+            ;;
+    esac
 }
 
 # Project & Solution Commands
@@ -1535,7 +2228,38 @@ abp_init_solution() {
 }
 
 abp_update() {
-    execute_abp_command "update" "$@"
+    # Check if solution-name is provided in arguments
+    local has_solution_name=false
+    local args=("$@")
+    
+    for ((i=0; i<${#args[@]}; i++)); do
+        if [ "${args[i]}" = "--solution-name" ] || [ "${args[i]}" = "-sn" ] || [ "${args[i]}" = "--sn" ]; then
+            has_solution_name=true
+            break
+        fi
+    done
+    
+    # If no solution name provided, auto-detect from .sln file
+    if [ "$has_solution_name" = false ]; then
+        local sln_files=$(find . -maxdepth 1 -name "*.sln" -type f 2>/dev/null)
+        if [ -z "$sln_files" ]; then
+            log_error "No solution name provided and no .sln file found in current directory."
+            log_info "Please either:"
+            log_info "  1. Provide --solution-name parameter"
+            log_info "  2. Run the command from within a solution directory"
+            return 1
+        fi
+        
+        # Auto-detect solution name from .sln file (use first one if multiple exist)
+        local first_sln=$(echo "$sln_files" | head -n1)
+        local detected_solution_name=$(basename "$first_sln" .sln)
+        log_info "Auto-detected solution name: $detected_solution_name"
+        
+        # Add solution name to arguments
+        args=("--solution-name" "$detected_solution_name" "${args[@]}")
+    fi
+    
+    execute_abp_command "update" "${args[@]}"
 }
 
 abp_upgrade() {
@@ -2211,6 +2935,10 @@ main() {
             36) check_dependencies; read -p "Press Enter to continue..." ;;
             37) abp_help; read -p "Press Enter to continue..." ;;
             38) abp_cli; read -p "Press Enter to continue..." ;;
+            39) rollback_last_entity ;;
+            40) delete_entity_by_name ;;
+            41) list_generated_entities ;;
+            42) clean_all_generated_files ;;
             99) 
                 echo ""
                 log_info "Exiting... Goodbye!"

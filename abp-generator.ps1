@@ -41,42 +41,358 @@ $script:EntityBaseClass = "FullAuditedAggregateRoot<Guid>"
 # SECTION 2: Utility Functions
 ################################################################################
 
+################################################################################
+# SECTION 2A: Entity Tracking Functions
+################################################################################
+
+function Get-TrackingFile {
+    if ([string]::IsNullOrWhiteSpace($script:ProjectRoot)) {
+        return Join-Path $script:ScriptDir "generated-entities.json"
+    }
+    return Join-Path $script:ProjectRoot "generated-entities.json"
+}
+
+function Get-TrackedEntities {
+    $trackingFile = Get-TrackingFile
+    if (Test-Path $trackingFile) {
+        try {
+            $content = Get-Content $trackingFile -Raw | ConvertFrom-Json
+            return $content.entities
+        } catch {
+            Write-Warning-Custom "Failed to read tracking file: $_"
+            return @()
+        }
+    }
+    return @()
+}
+
+function Save-TrackedEntities {
+    param([array]$Entities)
+    
+    $trackingFile = Get-TrackingFile
+    $trackingDir = Split-Path $trackingFile -Parent
+    if (-not (Test-Path $trackingDir)) {
+        New-Item -ItemType Directory -Path $trackingDir -Force | Out-Null
+    }
+    
+    $trackingData = @{
+        entities = $Entities
+    }
+    
+    $trackingData | ConvertTo-Json -Depth 10 | Set-Content $trackingFile -Encoding UTF8
+}
+
+function Add-EntityTracking {
+    param([array]$GeneratedFiles)
+    
+    $entities = Get-TrackedEntities
+    if ($null -eq $entities) {
+        $entities = @()
+    }
+    
+    # Convert to ArrayList for easier manipulation
+    $entityList = [System.Collections.ArrayList]::new()
+    foreach ($e in $entities) {
+        $entityList.Add($e) | Out-Null
+    }
+    
+    # Get relative paths
+    $relativeFiles = @()
+    foreach ($file in $GeneratedFiles) {
+        if ($file -and (Test-Path $file)) {
+            if ($script:ProjectRoot) {
+                $relativePath = $file.Replace($script:ProjectRoot, "").TrimStart('\', '/')
+            } else {
+                $relativePath = $file
+            }
+            $relativeFiles += $relativePath
+        }
+    }
+    
+    $entityInfo = @{
+        name = $script:EntityName
+        module = $script:ModuleName
+        generatedAt = (Get-Date -Format "o")
+        files = $relativeFiles
+    }
+    
+    $entityList.Add($entityInfo) | Out-Null
+    Save-TrackedEntities -Entities $entityList.ToArray()
+}
+
+function Remove-EntityTracking {
+    param([string]$EntityName, [string]$ModuleName)
+    
+    $entities = Get-TrackedEntities
+    if ($null -eq $entities) {
+        return $false
+    }
+    
+    $filtered = $entities | Where-Object { 
+        -not ($_.name -eq $EntityName -and $_.module -eq $ModuleName) 
+    }
+    
+    if ($filtered.Count -lt $entities.Count) {
+        Save-TrackedEntities -Entities $filtered
+        return $true
+    }
+    return $false
+}
+
+function Get-EntityFiles {
+    param([string]$EntityName, [string]$ModuleName)
+    
+    $entities = Get-TrackedEntities
+    $entity = $entities | Where-Object { 
+        $_.name -eq $EntityName -and $_.module -eq $ModuleName 
+    } | Select-Object -First 1
+    
+    if ($entity) {
+        $files = @()
+        foreach ($relativeFile in $entity.files) {
+            if ($script:ProjectRoot) {
+                $fullPath = Join-Path $script:ProjectRoot $relativeFile
+            } else {
+                $fullPath = $relativeFile
+            }
+            if (Test-Path $fullPath) {
+                $files += $fullPath
+            }
+        }
+        return $files
+    }
+    return @()
+}
+
+function Invoke-RollbackLastEntity {
+    Write-Header "Rollback Last Generated Entity"
+    
+    $entities = Get-TrackedEntities
+    if ($null -eq $entities -or $entities.Count -eq 0) {
+        Write-Warning-Custom "No tracked entities found."
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    
+    $lastEntity = $entities[$entities.Count - 1]
+    Write-Host "Last generated entity:"
+    Write-Host "  Name: $($lastEntity.name)"
+    Write-Host "  Module: $($lastEntity.module)"
+    Write-Host "  Generated: $($lastEntity.generatedAt)"
+    Write-Host ""
+    
+    $confirm = Read-Host "Delete this entity and all its files? [y/N]"
+    if ($confirm -match '^[Yy]$') {
+        $files = Get-EntityFiles -EntityName $lastEntity.name -ModuleName $lastEntity.module
+        $deletedCount = 0
+        foreach ($file in $files) {
+            if (Test-Path $file) {
+                Remove-Item $file -Force
+                Write-Info "Deleted: $file"
+                $deletedCount++
+            }
+        }
+        
+        Remove-EntityTracking -EntityName $lastEntity.name -ModuleName $lastEntity.module | Out-Null
+        Write-Success "Rolled back entity '$($lastEntity.name)'. Deleted $deletedCount files."
+    } else {
+        Write-Info "Rollback cancelled."
+    }
+    
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-DeleteEntity {
+    Write-Header "Delete Entity by Name"
+    
+    $entities = Get-TrackedEntities
+    if ($null -eq $entities -or $entities.Count -eq 0) {
+        Write-Warning-Custom "No tracked entities found."
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    
+    Write-Host "Available entities:"
+    for ($i = 0; $i -lt $entities.Count; $i++) {
+        Write-Host "  $($i + 1)) $($entities[$i].name) (Module: $($entities[$i].module))"
+    }
+    Write-Host ""
+    
+    $entityName = Read-Host "Enter entity name"
+    $moduleName = Read-Host "Enter module name"
+    
+    $entity = $entities | Where-Object { 
+        $_.name -eq $entityName -and $_.module -eq $moduleName 
+    } | Select-Object -First 1
+    
+    if (-not $entity) {
+        Write-Error-Custom "Entity '$entityName' in module '$moduleName' not found."
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    
+    Write-Host ""
+    Write-Host "Entity to delete:"
+    Write-Host "  Name: $($entity.name)"
+    Write-Host "  Module: $($entity.module)"
+    Write-Host "  Files: $($entity.files.Count)"
+    Write-Host ""
+    
+    $confirm = Read-Host "Delete this entity and all its files? [y/N]"
+    if ($confirm -match '^[Yy]$') {
+        $files = Get-EntityFiles -EntityName $entityName -ModuleName $moduleName
+        $deletedCount = 0
+        foreach ($file in $files) {
+            if (Test-Path $file) {
+                Remove-Item $file -Force
+                Write-Info "Deleted: $file"
+                $deletedCount++
+            }
+        }
+        
+        Remove-EntityTracking -EntityName $entityName -ModuleName $moduleName | Out-Null
+        Write-Success "Deleted entity '$entityName'. Removed $deletedCount files."
+    } else {
+        Write-Info "Deletion cancelled."
+    }
+    
+    Read-Host "Press Enter to continue..."
+}
+
+function Get-GeneratedEntities {
+    Write-Header "List Generated Entities"
+    
+    $entities = Get-TrackedEntities
+    if ($null -eq $entities -or $entities.Count -eq 0) {
+        Write-Warning-Custom "No tracked entities found."
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    
+    Write-Host "Generated Entities ($($entities.Count)):"
+    Write-Host ""
+    for ($i = 0; $i -lt $entities.Count; $i++) {
+        $entity = $entities[$i]
+        Write-Host "  $($i + 1)) $($entity.name) (Module: $($entity.module))"
+        Write-Host "      Generated: $($entity.generatedAt)"
+        Write-Host "      Files: $($entity.files.Count)"
+        Write-Host ""
+    }
+    
+    Read-Host "Press Enter to continue..."
+}
+
+function Invoke-CleanAllGeneratedFiles {
+    Write-Header "Clean All Generated Files"
+    
+    $entities = Get-TrackedEntities
+    if ($null -eq $entities -or $entities.Count -eq 0) {
+        Write-Warning-Custom "No tracked entities found."
+        Read-Host "Press Enter to continue..."
+        return
+    }
+    
+    Write-Host "This will delete ALL tracked entities and their files:"
+    Write-Host "  Total entities: $($entities.Count)"
+    $totalFiles = ($entities | ForEach-Object { $_.files.Count } | Measure-Object -Sum).Sum
+    Write-Host "  Total files: $totalFiles"
+    Write-Host ""
+    
+    $confirm = Read-Host "Are you sure? Type 'DELETE ALL' to confirm"
+    if ($confirm -eq "DELETE ALL") {
+        $deletedCount = 0
+        foreach ($entity in $entities) {
+            $files = Get-EntityFiles -EntityName $entity.name -ModuleName $entity.module
+            foreach ($file in $files) {
+                if (Test-Path $file) {
+                    Remove-Item $file -Force
+                    $deletedCount++
+                }
+            }
+        }
+        
+        $trackingFile = Get-TrackingFile
+        if (Test-Path $trackingFile) {
+            Remove-Item $trackingFile -Force
+        }
+        
+        Write-Success "Cleaned all generated files. Deleted $deletedCount files."
+    } else {
+        Write-Info "Cleanup cancelled."
+    }
+    
+    Read-Host "Press Enter to continue..."
+}
+
 function Write-Info {
     param([string]$Message)
-    Write-Host "[INFO] $Message" -ForegroundColor Blue
+    Write-Host "ℹ️  " -NoNewline -ForegroundColor Cyan
+    Write-Host $Message -ForegroundColor Blue
 }
 
 function Write-Success {
     param([string]$Message)
-    Write-Host "[SUCCESS] $Message" -ForegroundColor Green
+    Write-Host "✅ " -NoNewline -ForegroundColor Green
+    Write-Host $Message -ForegroundColor Green
 }
 
 function Write-Warning-Custom {
     param([string]$Message)
-    Write-Host "[WARNING] $Message" -ForegroundColor Yellow
+    Write-Host "⚠️  " -NoNewline -ForegroundColor Yellow
+    Write-Host $Message -ForegroundColor Yellow
 }
 
 function Write-Error-Custom {
     param([string]$Message)
-    Write-Host "[ERROR] $Message" -ForegroundColor Red
+    Write-Host "❌ " -NoNewline -ForegroundColor Red
+    Write-Host $Message -ForegroundColor Red
 }
 
 function Write-Step {
     param([string]$Message)
-    Write-Host "[STEP] $Message" -ForegroundColor Magenta
+    Write-Host "🔄 " -NoNewline -ForegroundColor Magenta
+    Write-Host $Message -ForegroundColor Magenta
+}
+
+function Write-Progress-Step {
+    param(
+        [string]$Message,
+        [int]$Current,
+        [int]$Total
+    )
+    $percentage = [math]::Round(($Current / $Total) * 100)
+    $progressBar = "[" + ("=" * ([math]::Floor($percentage / 5))) + (" " * (20 - [math]::Floor($percentage / 5))) + "]"
+    Write-Host "⏳ " -NoNewline -ForegroundColor Cyan
+    Write-Host "$progressBar $percentage% " -NoNewline -ForegroundColor Cyan
+    Write-Host "($Current/$Total) " -NoNewline -ForegroundColor Gray
+    Write-Host $Message -ForegroundColor White
 }
 
 function Write-Header {
     param([string]$Message)
     Write-Host ""
-    Write-Host ("=" * 63) -ForegroundColor Cyan
-    Write-Host "  $Message" -ForegroundColor Cyan
-    Write-Host ("=" * 63) -ForegroundColor Cyan
+    Write-Host "╔" -NoNewline -ForegroundColor Cyan
+    Write-Host ("═" * 70) -NoNewline -ForegroundColor Cyan
+    Write-Host "╗" -ForegroundColor Cyan
+    Write-Host "║  " -NoNewline -ForegroundColor Cyan
+    Write-Host $Message.PadRight(68) -NoNewline -ForegroundColor White
+    Write-Host "║" -ForegroundColor Cyan
+    Write-Host "╚" -NoNewline -ForegroundColor Cyan
+    Write-Host ("═" * 70) -NoNewline -ForegroundColor Cyan
+    Write-Host "╝" -ForegroundColor Cyan
     Write-Host ""
 }
 
 function Write-Separator {
-    Write-Host ("-" * 63) -ForegroundColor Cyan
+    Write-Host ("─" * 72) -ForegroundColor DarkCyan
+}
+
+function Write-SectionHeader {
+    param([string]$Title)
+    Write-Host ""
+    Write-Host "▶ " -NoNewline -ForegroundColor Cyan
+    Write-Host $Title -ForegroundColor White
+    Write-Host ("─" * 72) -ForegroundColor DarkCyan
 }
 
 function Test-Dependencies {
@@ -207,6 +523,13 @@ function Read-JsonEntity {
             $script:EntityIdType = "Guid"
         }
         
+        # Parse DbContext name if provided
+        if ($json.dbContext) {
+            $script:DbContextName = $json.dbContext
+        } else {
+            $script:DbContextName = "$($script:ModuleName)DbContext"
+        }
+        
         # Update base class with ID type if it contains <Guid>
         if ($script:EntityBaseClass -match "<Guid>") {
             $script:EntityBaseClass = $script:EntityBaseClass -replace "<Guid>", "<$($script:EntityIdType)>"
@@ -252,8 +575,25 @@ function New-PropertyDeclaration {
         $declaration += "[StringLength($($Property.maxLength))]`n    "
     }
     
+    # Determine if property should be nullable
+    $isNullable = $false
+    if ($Property.nullable -eq $true -or ($Property.required -ne $true)) {
+        $isNullable = $true
+    }
+    
+    # Make type nullable if needed
+    $finalType = $Property.type
+    if ($isNullable) {
+        $valueTypes = @("int", "long", "decimal", "double", "float", "bool", "DateTime", "Guid")
+        if ($valueTypes -contains $Property.type) {
+            $finalType = "$($Property.type)?"
+        } elseif ($Property.type -eq "string") {
+            $finalType = "string?"
+        }
+    }
+    
     # Add property
-    $declaration += "public $($Property.type) $($Property.name) { get; set; }"
+    $declaration += "public $finalType $($Property.name) { get; set; }"
     
     return $declaration
 }
@@ -548,6 +888,45 @@ function New-EntityFromJson {
         New-ValidationFiles
     }
     
+    # Collect generated files for tracking (build expected paths)
+    $generatedFiles = @()
+    
+    # Entity files
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\$script:EntityName.cs"
+    
+    # DTO files
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\Create$($script:EntityName)Dto.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\Update$($script:EntityName)Dto.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\$($script:EntityName)Dto.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\Get$($script:EntityName)ListInput.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\$($script:EntityName)LookupDto.cs"
+    
+    # Repository files
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\I$($script:EntityName)Repository.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.EntityFrameworkCore\$script:ModuleName\Repositories\EfCore$($script:EntityName)Repository.cs"
+    
+    # Service files
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\I$($script:EntityName)AppService.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application\$script:ModuleName\$($script:EntityName)AppService.cs"
+    
+    # Controller files
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.HttpApi\$script:ModuleName\Controllers\$($script:EntityName)Controller.cs"
+    
+    # Optional files
+    if ($json.options.generateSeeder -eq $true) {
+        $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.EntityFrameworkCore\$script:ModuleName\$($script:EntityName)DataSeeder.cs"
+    }
+    if ($json.options.generateValidation -eq $true) {
+        $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application\$script:ModuleName\Validators\$($script:EntityName)Validator.cs"
+    }
+    if ($json.options.generateTests -eq $true) {
+        $generatedFiles += Join-Path $script:ProjectRoot "test\$script:Namespace.Application.Tests\$script:ModuleName\$($script:EntityName)AppServiceTests.cs"
+        $generatedFiles += Join-Path $script:ProjectRoot "test\$script:Namespace.Domain.Tests\$script:ModuleName\$($script:EntityName)DomainTests.cs"
+    }
+    
+    # Track the generated entity
+    Add-EntityTracking -GeneratedFiles $generatedFiles
+    
     Write-Success "Entity generation complete!"
     return $true
 }
@@ -572,6 +951,21 @@ function New-EntityFiles {
         $softDeleteUsing = "`nusing Volo.Abp;"
     }
     
+    # Check if properties have validation attributes (Required, StringLength, etc.)
+    $hasValidationAttributes = $false
+    foreach ($prop in $Properties) {
+        if ($prop.required -eq $true -or $prop.nullable -eq $true -or $prop.maxLength -or $prop.minLength) {
+            $hasValidationAttributes = $true
+            break
+        }
+    }
+    
+    # Add DataAnnotations using only if validation attributes are present
+    $dataAnnotationsUsing = ""
+    if ($hasValidationAttributes) {
+        $dataAnnotationsUsing = "`nusing System.ComponentModel.DataAnnotations;"
+    }
+    
     $vars = @{
         NAMESPACE = $script:Namespace
         MODULE_NAME = $script:ModuleName
@@ -580,6 +974,7 @@ function New-EntityFiles {
         BASE_CLASS = $script:EntityBaseClass
         ID_TYPE = $script:EntityIdType
         SOFT_DELETE_USING = $softDeleteUsing
+        DATA_ANNOTATIONS_USING = $dataAnnotationsUsing
     }
     
     $templateFile = Join-Path $script:TemplatesDir "domain\entity.template.cs"
@@ -599,20 +994,30 @@ function New-DtoFiles {
         ENTITY_NAME = $script:EntityName
     }
     
-    # Create DTO
+    # Create DTO (in Contracts)
     $templateFile = Join-Path $script:TemplatesDir "application\dto-create.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application\DTOs\Create$($script:EntityName)Dto.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\Create$($script:EntityName)Dto.cs"
     Invoke-TemplateWithProperties $templateFile $outputFile $Properties $vars
     
-    # Update DTO
+    # Update DTO (in Contracts)
     $templateFile = Join-Path $script:TemplatesDir "application\dto-update.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application\DTOs\Update$($script:EntityName)Dto.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\Update$($script:EntityName)Dto.cs"
     Invoke-TemplateWithProperties $templateFile $outputFile $Properties $vars
     
-    # Entity DTO
+    # Entity DTO (in Contracts)
     $templateFile = Join-Path $script:TemplatesDir "application\dto-entity.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application\DTOs\$($script:EntityName)Dto.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\$($script:EntityName)Dto.cs"
     Invoke-TemplateWithProperties $templateFile $outputFile $Properties $vars
+    
+    # List Input DTO (in Contracts)
+    $templateFile = Join-Path $script:TemplatesDir "application\dto-list-input.template.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\Get$($script:EntityName)ListInput.cs"
+    Invoke-TemplateProcessing $templateFile $outputFile $vars
+    
+    # Lookup DTO (in Contracts)
+    $templateFile = Join-Path $script:TemplatesDir "application\dto-lookup.template.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\$($script:EntityName)LookupDto.cs"
+    Invoke-TemplateProcessing $templateFile $outputFile $vars
 }
 
 function New-RepositoryFiles {
@@ -620,11 +1025,18 @@ function New-RepositoryFiles {
     
     $entityNameLower = $script:EntityName.Substring(0,1).ToLower() + $script:EntityName.Substring(1)
     
+    # Use selected DbContext or default to module name
+    if ([string]::IsNullOrWhiteSpace($script:DbContextName)) {
+        $script:DbContextName = "$($script:ModuleName)DbContext"
+    }
+    
     $vars = @{
         NAMESPACE = $script:Namespace
         MODULE_NAME = $script:ModuleName
         ENTITY_NAME = $script:EntityName
         ENTITY_NAME_LOWER = $entityNameLower
+        ID_TYPE = $script:EntityIdType
+        DB_CONTEXT_NAME = $script:DbContextName
     }
     
     # Repository interface
@@ -634,7 +1046,7 @@ function New-RepositoryFiles {
     
     # EF Repository
     $templateFile = Join-Path $script:TemplatesDir "infrastructure\ef-repository.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.EntityFrameworkCore\$script:ModuleName\EfCore$($script:EntityName)Repository.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.EntityFrameworkCore\$script:ModuleName\Repositories\EfCore$($script:EntityName)Repository.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
 }
 
@@ -652,12 +1064,12 @@ function New-ServiceFiles {
         ENTITY_NAME_PLURAL = $entityNamePlural
     }
     
-    # Service interface
+    # Service interface (in Contracts)
     $templateFile = Join-Path $script:TemplatesDir "application\app-service-interface.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application\$script:ModuleName\I$($script:EntityName)AppService.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\I$($script:EntityName)AppService.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
     
-    # Service implementation
+    # Service implementation (in Application)
     $templateFile = Join-Path $script:TemplatesDir "application\app-service-crud.template.cs"
     $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application\$script:ModuleName\$($script:EntityName)AppService.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
@@ -682,7 +1094,7 @@ function New-ControllerFiles {
     }
     
     $templateFile = Join-Path $script:TemplatesDir "api\controller-crud.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.HttpApi\Controllers\$($script:EntityName)Controller.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.HttpApi\$script:ModuleName\Controllers\$($script:EntityName)Controller.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
 }
 
@@ -717,7 +1129,7 @@ function New-ValidationFiles {
     }
     
     $templateFile = Join-Path $script:TemplatesDir "application\validator.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application\$script:ModuleName\$($script:EntityName)Validator.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application\$script:ModuleName\Validators\$($script:EntityName)Validator.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
 }
 
@@ -844,6 +1256,63 @@ function Select-EntityBaseClass {
     }
 }
 
+function Select-DbContext {
+    Write-Host ""
+    Write-Host "Select DbContext:"
+    Write-Host ""
+    
+    # Try to auto-detect DbContext files
+    $dbContextFiles = @()
+    if ($script:ProjectRoot) {
+        $dbContextFiles = Get-ChildItem -Path $script:ProjectRoot -Recurse -Filter "*DbContext.cs" -File -ErrorAction SilentlyContinue | 
+            Where-Object { $_.FullName -notmatch "\\bin\\|\\obj\\" }
+    }
+    
+    if ($dbContextFiles.Count -gt 0) {
+        Write-Host "Found DbContext files:"
+        for ($i = 0; $i -lt $dbContextFiles.Count; $i++) {
+            $dbContextName = [System.IO.Path]::GetFileNameWithoutExtension($dbContextFiles[$i].Name)
+            Write-Host "  $($i + 1)) $dbContextName"
+        }
+        Write-Host "  $($dbContextFiles.Count + 1)) Use module name: $($script:ModuleName)DbContext (default)"
+        Write-Host "  $($dbContextFiles.Count + 2)) Enter custom DbContext name"
+        Write-Host ""
+        
+        $choice = Read-Host "Enter choice [1-$($dbContextFiles.Count + 2)] (default: $($dbContextFiles.Count + 1))"
+        
+        if ([string]::IsNullOrEmpty($choice)) {
+            $choice = ($dbContextFiles.Count + 1).ToString()
+        }
+        
+        $index = [int]$choice - 1
+        if ($index -ge 0 -and $index -lt $dbContextFiles.Count) {
+            $script:DbContextName = [System.IO.Path]::GetFileNameWithoutExtension($dbContextFiles[$index].Name)
+            Write-Info "Selected DbContext: $($script:DbContextName)"
+            return $true
+        } elseif ($index -eq $dbContextFiles.Count) {
+            $script:DbContextName = "$($script:ModuleName)DbContext"
+            Write-Info "Using module DbContext: $($script:DbContextName)"
+            return $true
+        } elseif ($index -eq ($dbContextFiles.Count + 1)) {
+            $customName = Read-Host "Enter DbContext name"
+            if (-not [string]::IsNullOrWhiteSpace($customName)) {
+                $script:DbContextName = $customName
+                Write-Info "Using custom DbContext: $($script:DbContextName)"
+                return $true
+            }
+        }
+    } else {
+        Write-Host "No DbContext files found. Using module name: $($script:ModuleName)DbContext"
+        $script:DbContextName = "$($script:ModuleName)DbContext"
+        return $true
+    }
+    
+    # Default fallback
+    $script:DbContextName = "$($script:ModuleName)DbContext"
+    Write-Info "Using default DbContext: $($script:DbContextName)"
+    return $true
+}
+
 function New-EntityInteractive {
     Write-Step "Interactive entity generation"
     
@@ -885,6 +1354,9 @@ function New-EntityInteractive {
     # Select base class (will use selected ID type)
     Select-EntityBaseClass | Out-Null
     
+    # Select DbContext
+    Select-DbContext | Out-Null
+    
     Write-Warning-Custom "Basic entity generation (no JSON)"
     Write-Info "For advanced features (properties, relationships), use JSON format"
     
@@ -901,67 +1373,76 @@ function Show-MainMenu {
     Clear-Host
     Write-Header "ABP Framework Project & Module Generator v1.0"
     
-    Write-Host "Select an operation:"
+    Write-Host "🎯 " -NoNewline -ForegroundColor Cyan
+    Write-Host "Select an operation:" -ForegroundColor White
+    Write-Separator
+    
+    Write-SectionHeader "PROJECT MANAGEMENT"
+    Write-Host "  1️⃣  Create New ABP Project" -ForegroundColor White
+    Write-Host "  2️⃣  Create New Module" -ForegroundColor White
+    Write-Host "  3️⃣  Create New Package" -ForegroundColor White
+    Write-Host "  4️⃣  Initialize Solution" -ForegroundColor White
+    Write-Host "  5️⃣  Update Solution" -ForegroundColor White
+    Write-Host "  6️⃣  Upgrade Solution" -ForegroundColor White
+    Write-Host "  7️⃣  Clean Solution" -ForegroundColor White
     Write-Host ""
-    Write-Host "PROJECT MANAGEMENT:"
-    Write-Host "  1) Create New ABP Project"
-    Write-Host "  2) Create New Module"
-    Write-Host "  3) Create New Package"
-    Write-Host "  4) Initialize Solution"
-    Write-Host "  5) Update Solution"
-    Write-Host "  6) Upgrade Solution"
-    Write-Host "  7) Clean Solution"
+    Write-SectionHeader "MODULE & PACKAGE MANAGEMENT"
+    Write-Host "  8️⃣  Add Package" -ForegroundColor White
+    Write-Host "  9️⃣  Add Package Reference" -ForegroundColor White
+    Write-Host "  🔟 Install Module" -ForegroundColor White
+    Write-Host "  1️⃣ 1️⃣ Install Local Module" -ForegroundColor White
+    Write-Host "  1️⃣ 2️⃣ List Modules" -ForegroundColor White
+    Write-Host "  1️⃣ 3️⃣ List Templates" -ForegroundColor White
     Write-Host ""
-    Write-Host "MODULE & PACKAGE MANAGEMENT:"
-    Write-Host "  8) Add Package"
-    Write-Host "  9) Add Package Reference"
-    Write-Host " 10) Install Module"
-    Write-Host " 11) Install Local Module"
-    Write-Host " 12) List Modules"
-    Write-Host " 13) List Templates"
+    Write-SectionHeader "SOURCE CODE MANAGEMENT"
+    Write-Host "  1️⃣ 4️⃣ Get Module Source" -ForegroundColor White
+    Write-Host "  1️⃣ 5️⃣ Add Source Code" -ForegroundColor White
+    Write-Host "  1️⃣ 6️⃣ List Module Sources" -ForegroundColor White
+    Write-Host "  1️⃣ 7️⃣ Add Module Source" -ForegroundColor White
+    Write-Host "  1️⃣ 8️⃣ Delete Module Source" -ForegroundColor White
     Write-Host ""
-    Write-Host "SOURCE CODE MANAGEMENT:"
-    Write-Host " 14) Get Module Source"
-    Write-Host " 15) Add Source Code"
-    Write-Host " 16) List Module Sources"
-    Write-Host " 17) Add Module Source"
-    Write-Host " 18) Delete Module Source"
+    Write-SectionHeader "PROXY GENERATION"
+    Write-Host "  1️⃣ 9️⃣ Generate Proxy" -ForegroundColor White
+    Write-Host "  2️⃣ 0️⃣ Remove Proxy" -ForegroundColor White
     Write-Host ""
-    Write-Host "PROXY GENERATION:"
-    Write-Host " 19) Generate Proxy"
-    Write-Host " 20) Remove Proxy"
+    Write-SectionHeader "VERSION MANAGEMENT"
+    Write-Host "  2️⃣ 1️⃣ Switch to Preview" -ForegroundColor White
+    Write-Host "  2️⃣ 2️⃣ Switch to Nightly" -ForegroundColor White
+    Write-Host "  2️⃣ 3️⃣ Switch to Stable" -ForegroundColor White
+    Write-Host "  2️⃣ 4️⃣ Switch to Local" -ForegroundColor White
     Write-Host ""
-    Write-Host "VERSION MANAGEMENT:"
-    Write-Host " 21) Switch to Preview"
-    Write-Host " 22) Switch to Nightly"
-    Write-Host " 23) Switch to Stable"
-    Write-Host " 24) Switch to Local"
+    Write-SectionHeader "🎨 ENTITY GENERATION (Custom)"
+    Write-Host "  2️⃣ 5️⃣ Add Entity with CRUD" -ForegroundColor Green
+    Write-Host "  2️⃣ 6️⃣ Generate from JSON" -ForegroundColor Green
     Write-Host ""
-    Write-Host "ENTITY GENERATION (Custom):"
-    Write-Host " 25) Add Entity with CRUD"
-    Write-Host " 26) Generate from JSON"
+    Write-SectionHeader "🗑️  ENTITY CLEANUP"
+    Write-Host "  3️⃣ 9️⃣ Rollback Last Generated Entity" -ForegroundColor Yellow
+    Write-Host "  4️⃣ 0️⃣ Delete Entity by Name" -ForegroundColor Yellow
+    Write-Host "  4️⃣ 1️⃣ List Generated Entities" -ForegroundColor Cyan
+    Write-Host "  4️⃣ 2️⃣ Clean All Generated Files" -ForegroundColor Red
     Write-Host ""
-    Write-Host "AUTHENTICATION:"
-    Write-Host " 27) Login"
-    Write-Host " 28) Login Info"
-    Write-Host " 29) Logout"
+    Write-SectionHeader "AUTHENTICATION"
+    Write-Host "  2️⃣ 7️⃣ Login" -ForegroundColor White
+    Write-Host "  2️⃣ 8️⃣ Login Info" -ForegroundColor White
+    Write-Host "  2️⃣ 9️⃣ Logout" -ForegroundColor White
     Write-Host ""
-    Write-Host "BUILD & BUNDLE:"
-    Write-Host " 30) Bundle (Blazor/MAUI)"
-    Write-Host " 31) Install Libs"
+    Write-SectionHeader "BUILD & BUNDLE"
+    Write-Host "  3️⃣ 0️⃣ Bundle (Blazor/MAUI)" -ForegroundColor White
+    Write-Host "  3️⃣ 1️⃣ Install Libs" -ForegroundColor White
     Write-Host ""
-    Write-Host "LOCALIZATION:"
-    Write-Host " 32) Translate"
+    Write-SectionHeader "LOCALIZATION"
+    Write-Host "  3️⃣ 2️⃣ Translate" -ForegroundColor White
     Write-Host ""
-    Write-Host "UTILITIES:"
-    Write-Host " 33) Check Extensions"
-    Write-Host " 34) Install Old CLI"
-    Write-Host " 35) Generate Razor Page"
-    Write-Host " 36) Check Dependencies"
-    Write-Host " 37) ABP Help"
-    Write-Host " 38) ABP CLI Info"
+    Write-SectionHeader "UTILITIES"
+    Write-Host "  3️⃣ 3️⃣ Check Extensions" -ForegroundColor White
+    Write-Host "  3️⃣ 4️⃣ Install Old CLI" -ForegroundColor White
+    Write-Host "  3️⃣ 5️⃣ Generate Razor Page" -ForegroundColor White
+    Write-Host "  3️⃣ 6️⃣ Check Dependencies" -ForegroundColor White
+    Write-Host "  3️⃣ 7️⃣ ABP Help" -ForegroundColor White
+    Write-Host "  3️⃣ 8️⃣ ABP CLI Info" -ForegroundColor White
     Write-Host ""
-    Write-Host " 99) Exit"
+    Write-Host "  9️⃣ 9️⃣ " -NoNewline -ForegroundColor Red
+    Write-Host "Exit" -ForegroundColor Red
     Write-Host ""
     Write-Separator
     
@@ -1160,10 +1641,41 @@ function Invoke-CliMode {
                 return
             }
             
+            # Special handling for update command
+            if ($operation -eq "update") {
+                $hasSolutionName = $false
+                $solutionNameIndex = -1
+                for ($i = 0; $i -lt $remainingArgs.Count; $i++) {
+                    if ($remainingArgs[$i] -match "^--?solution-name$" -or $remainingArgs[$i] -match "^--?sn$") {
+                        $hasSolutionName = $true
+                        $solutionNameIndex = $i
+                        break
+                    }
+                }
+                
+                if (-not $hasSolutionName) {
+                    $slnFiles = Get-ChildItem -Path . -Filter "*.sln" -File -ErrorAction SilentlyContinue
+                    if ($null -eq $slnFiles -or $slnFiles.Count -eq 0) {
+                        Write-Error-Custom "No solution name provided and no .sln file found in current directory."
+                        Write-Info "Please either:"
+                        Write-Info "  1. Provide --solution-name parameter"
+                        Write-Info "  2. Run the command from within a solution directory"
+                        return
+                    }
+                    
+                    # Auto-detect solution name from .sln file and add to arguments
+                    $slnFile = if ($slnFiles.Count -gt 0) { $slnFiles[0] } else { $slnFiles }
+                    $detectedSolutionName = [System.IO.Path]::GetFileNameWithoutExtension($slnFile.Name)
+                    Write-Info "Auto-detected solution name: $detectedSolutionName"
+                    $remainingArgs = @("--solution-name", $detectedSolutionName) + $remainingArgs
+                }
+            }
+            
             # Pass through to ABP CLI directly
-            Write-Info "Executing: abp $($Args -join ' ')"
+            $finalArgs = @($operation) + $remainingArgs
+            Write-Info "Executing: abp $($finalArgs -join ' ')"
             try {
-                & abp $Args
+                & abp $finalArgs
                 if ($LASTEXITCODE -ne 0) {
                     Write-Error-Custom "Command failed with exit code $LASTEXITCODE"
                 }
@@ -1221,6 +1733,12 @@ function Show-Usage {
     Write-Host "  .\abp-generator.ps1 add-entity --from-json <file.json>"
     Write-Host "  .\abp-generator.ps1 add-entity --module <module> --name <name>"
     Write-Host ""
+    Write-Host "ENTITY CLEANUP:"
+    Write-Host "  .\abp-generator.ps1 rollback"
+    Write-Host "  .\abp-generator.ps1 delete-entity --name <entity>"
+    Write-Host "  .\abp-generator.ps1 list-entities"
+    Write-Host "  .\abp-generator.ps1 clean-all"
+    Write-Host ""
     Write-Host "AUTHENTICATION:"
     Write-Host "  .\abp-generator.ps1 login [--username <user>] [--password <pass>]"
     Write-Host "  .\abp-generator.ps1 login-info"
@@ -1245,12 +1763,14 @@ function Show-Usage {
     Write-Host "  .\abp-generator.ps1 kube-intercept --service <name>"
     Write-Host ""
     Write-Host "Examples:"
+    Write-Host "  .\abp-generator.ps1                                          # Interactive mode"
     Write-Host "  .\abp-generator.ps1 create-project --name MyApp --template app"
-    Write-Host "  .\abp-generator.ps1 new --name MyApp --template app --database-provider ef"
     Write-Host "  .\abp-generator.ps1 add-entity --from-json product.json"
+    Write-Host "  .\abp-generator.ps1 list-entities                           # List generated entities"
+    Write-Host "  .\abp-generator.ps1 rollback                                # Undo last entity"
     Write-Host "  .\abp-generator.ps1 install-module --solution-name MyApp --module Volo.Blogging"
-    Write-Host "  .\abp-generator.ps1 login"
-    Write-Host "  .\abp-generator.ps1 help new"
+    Write-Host ""
+    Write-Host "For more information, visit: https://abp.io/docs/latest/cli"
 }
 
 ################################################################################
@@ -1413,6 +1933,23 @@ function Invoke-AbpUpdate {
         [switch]$NoBuild,
         [switch]$SkipCache
     )
+    
+    # If no solution name provided, auto-detect from .sln file
+    if ([string]::IsNullOrWhiteSpace($SolutionName)) {
+        $slnFiles = Get-ChildItem -Path . -Filter "*.sln" -File -ErrorAction SilentlyContinue
+        if ($null -eq $slnFiles -or $slnFiles.Count -eq 0) {
+            Write-Error-Custom "No solution name provided and no .sln file found in current directory."
+            Write-Info "Please either:"
+            Write-Info "  1. Provide --solution-name parameter"
+            Write-Info "  2. Run the command from within a solution directory"
+            return $false
+        }
+        
+        # Auto-detect solution name from .sln file (use first one if multiple exist)
+        $slnFile = if ($slnFiles.Count -gt 0) { $slnFiles[0] } else { $slnFiles }
+        $SolutionName = [System.IO.Path]::GetFileNameWithoutExtension($slnFile.Name)
+        Write-Info "Auto-detected solution name: $SolutionName"
+    }
     
     $params = @{}
     
@@ -2268,6 +2805,10 @@ function Main {
             }
             "37" { Invoke-AbpHelp; Read-Host "Press Enter to continue..." }
             "38" { Invoke-AbpCli; Read-Host "Press Enter to continue..." }
+            "39" { Invoke-RollbackLastEntity }
+            "40" { Invoke-DeleteEntity }
+            "41" { Get-GeneratedEntities }
+            "42" { Invoke-CleanAllGeneratedFiles }
             "99" {
                 Write-Host ""
                 Write-Info "Exiting... Goodbye!"

@@ -1,15 +1,21 @@
 {
-  "entity": "Order",
-  "module": "Sales",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Sales",
+  "entityName": "Order",
+  "entityNamePlural": "Orders",
+  "baseClass": "AuditedAggregateRoot",
   "idType": "long",
-  "baseClass": "AuditedAggregateRoot<long>",
+  "dbContextName": "SalesDbContext",
   "properties": [
     {
       "name": "OrderNumber",
       "type": "string",
       "required": true,
-      "unique": true,
-      "maxLength": 50
+      "maxLength": 50,
+      "validation": {
+        "pattern": "^ORD-[0-9]{8}$",
+        "asyncUnique": true
+      }
     },
     {
       "name": "OrderDate",
@@ -19,34 +25,45 @@
     {
       "name": "TotalAmount",
       "type": "decimal",
-      "required": true
+      "required": true,
+      "validation": {
+        "min": 0
+      }
     },
     {
       "name": "Status",
       "type": "string",
       "required": true,
       "maxLength": 50
+    },
+    {
+      "name": "CustomerId",
+      "type": "long",
+      "required": true
     }
   ],
   "relationships": [
     {
       "name": "Customer",
       "type": "ManyToOne",
-      "entity": "Customer",
+      "relatedEntity": "Customer",
       "foreignKey": "CustomerId",
       "required": true
     },
     {
       "name": "OrderItems",
       "type": "OneToMany",
-      "entity": "OrderItem",
+      "relatedEntity": "OrderItem",
       "foreignKey": "OrderId"
     }
   ],
   "options": {
-    "generateSeeder": true,
-    "generateTests": true,
-    "generateValidation": true
+    "generatePermissions": true,
+    "generateLocalization": true,
+    "advancedValidation": true,
+    "apiDocumentation": true,
+    "comprehensiveTests": true,
+    "auditLogging": false
   }
 }
 

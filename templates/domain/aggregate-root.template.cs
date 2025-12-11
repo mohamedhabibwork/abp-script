@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using Volo.Abp.Domain.Entities.Auditing;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.Entities
+namespace ${NAMESPACE}.Domain.${MODULE_NAME}
 {
     /// <summary>
     /// Represents a ${ENTITY_NAME} aggregate root.

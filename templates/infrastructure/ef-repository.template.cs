@@ -7,15 +7,16 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Volo.Abp.Domain.Repositories.EntityFrameworkCore;
 using Volo.Abp.EntityFrameworkCore;
+using ${NAMESPACE}.Domain.${MODULE_NAME};
 
-namespace ${NAMESPACE}.EntityFrameworkCore.Repositories
+namespace ${NAMESPACE}.EntityFrameworkCore.${MODULE_NAME}.Repositories
 {
     /// <summary>
     /// Entity Framework Core repository implementation for ${ENTITY_NAME}.
     /// Implements the Repository pattern with EF Core.
     /// </summary>
-    public class Ef Core${ENTITY_NAME}Repository : 
-        EfCoreRepository<${MODULE_NAME}DbContext, ${ENTITY_NAME}, Guid>,
+    public class EfCore${ENTITY_NAME}Repository : 
+        EfCoreRepository<${DB_CONTEXT_NAME}, ${ENTITY_NAME}, ${ID_TYPE}>,
         I${ENTITY_NAME}Repository
     {
         /// <summary>
@@ -23,7 +24,7 @@ namespace ${NAMESPACE}.EntityFrameworkCore.Repositories
         /// </summary>
         /// <param name="dbContextProvider">The database context provider.</param>
         public EfCore${ENTITY_NAME}Repository(
-            IDbContextProvider<${MODULE_NAME}DbContext> dbContextProvider)
+            IDbContextProvider<${DB_CONTEXT_NAME}> dbContextProvider)
             : base(dbContextProvider)
         {
         }
@@ -126,7 +127,7 @@ namespace ${NAMESPACE}.EntityFrameworkCore.Repositories
         /// <returns>True if exists; otherwise, false.</returns>
         public virtual async Task<bool> ExistsByNameAsync(
             string name,
-            Guid? excludeId = null,
+            ${ID_TYPE}? excludeId = null,
             CancellationToken cancellationToken = default)
         {
             var dbSet = await GetDbSetAsync();

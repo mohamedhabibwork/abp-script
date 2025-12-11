@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using Volo.Abp.Domain.Values;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.ValueObjects
+namespace ${NAMESPACE}.Domain.${MODULE_NAME}
 {
     /// <summary>
     /// Represents a ${VALUE_OBJECT_NAME} value object.

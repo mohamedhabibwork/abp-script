@@ -3,7 +3,7 @@ using System.Threading.Tasks;
 using Volo.Abp;
 using Volo.Abp.Domain.Services;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.DomainServices
+namespace ${NAMESPACE}.Domain.${MODULE_NAME}.Services
 {
     /// <summary>
     /// Domain service for ${ENTITY_NAME} management.

@@ -9,7 +9,7 @@ namespace ${NAMESPACE}.EntityFrameworkCore
     /// Implements the Unit of Work pattern through EF Core.
     /// </summary>
     [ConnectionStringName("${MODULE_NAME}")]
-    public class ${MODULE_NAME}DbContext : AbpDbContext<${MODULE_NAME}DbContext>
+    public class ${DB_CONTEXT_NAME} : AbpDbContext<${DB_CONTEXT_NAME}>
     {
         /// <summary>
         /// Gets or sets the ${ENTITY_NAME_PLURAL} DbSet.
@@ -19,10 +19,10 @@ namespace ${NAMESPACE}.EntityFrameworkCore
         ${ADDITIONAL_DBSETS}
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="${MODULE_NAME}DbContext"/> class.
+        /// Initializes a new instance of the <see cref="${DB_CONTEXT_NAME}"/> class.
         /// </summary>
         /// <param name="options">The database context options.</param>
-        public ${MODULE_NAME}DbContext(DbContextOptions<${MODULE_NAME}DbContext> options)
+        public ${DB_CONTEXT_NAME}(DbContextOptions<${DB_CONTEXT_NAME}> options)
             : base(options)
         {
         }

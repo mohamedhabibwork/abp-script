@@ -1,8 +1,11 @@
 {
-  "entity": "Product",
-  "module": "Catalog",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Catalog",
+  "entityName": "Product",
+  "entityNamePlural": "Products",
+  "baseClass": "FullAuditedAggregateRoot",
   "idType": "Guid",
-  "baseClass": "FullAuditedAggregateRoot<Guid>",
+  "dbContextName": "CatalogDbContext",
   "properties": [
     {
       "name": "Name",
@@ -23,8 +26,18 @@
     {
       "name": "Description",
       "type": "string",
+      "required": false,
+      "nullable": true,
       "maxLength": 2000
     }
-  ]
+  ],
+  "options": {
+    "generatePermissions": true,
+    "generateLocalization": true,
+    "advancedValidation": false,
+    "apiDocumentation": true,
+    "comprehensiveTests": false,
+    "auditLogging": false
+  }
 }
 

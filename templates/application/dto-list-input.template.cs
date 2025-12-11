@@ -1,6 +1,6 @@
 using Volo.Abp.Application.Dtos;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.DTOs
+namespace ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.DTOs
 {
     /// <summary>
     /// Input DTO for getting a list of ${ENTITY_NAME} entities.

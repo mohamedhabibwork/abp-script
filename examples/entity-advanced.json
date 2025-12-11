@@ -11,8 +11,28 @@
       "name": "Name",
       "type": "string",
       "required": true,
-      "maxLength": 128,
-      "minLength": 2
+      "maxLength": 200,
+      "minLength": 3,
+      "validation": {
+        "pattern": "alphanumeric",
+        "asyncUnique": true
+      }
+    },
+    {
+      "name": "Description",
+      "type": "string",
+      "required": false,
+      "nullable": true,
+      "maxLength": 1000
+    },
+    {
+      "name": "Price",
+      "type": "decimal",
+      "required": true,
+      "validation": {
+        "min": 0,
+        "max": 999999.99
+      }
     },
     {
       "name": "SKU",
@@ -25,23 +45,16 @@
       }
     },
     {
-      "name": "Price",
-      "type": "decimal",
+      "name": "StockQuantity",
+      "type": "int",
       "required": true,
+      "defaultValue": "0",
       "validation": {
-        "min": 0,
-        "max": 999999
+        "min": 0
       }
     },
     {
-      "name": "Description",
-      "type": "string",
-      "required": false,
-      "nullable": true,
-      "maxLength": 2000
-    },
-    {
-      "name": "IsActive",
+      "name": "IsAvailable",
       "type": "bool",
       "required": true,
       "defaultValue": "true"
@@ -50,6 +63,12 @@
       "name": "CategoryId",
       "type": "Guid",
       "required": true
+    },
+    {
+      "name": "PublishedDate",
+      "type": "DateTime",
+      "required": false,
+      "nullable": true
     }
   ],
   "relationships": [
@@ -57,20 +76,7 @@
       "name": "Category",
       "type": "ManyToOne",
       "relatedEntity": "Category",
-      "foreignKey": "CategoryId",
-      "required": true
-    },
-    {
-      "name": "Tags",
-      "type": "ManyToMany",
-      "relatedEntity": "Tag",
-      "joinTable": "ProductTags"
-    },
-    {
-      "name": "Reviews",
-      "type": "OneToMany",
-      "relatedEntity": "ProductReview",
-      "foreignKey": "ProductId"
+      "foreignKey": "CategoryId"
     }
   ],
   "options": {

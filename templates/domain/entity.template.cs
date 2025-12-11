@@ -1,9 +1,10 @@
 using System;
 using Volo.Abp.Domain.Entities;
 using Volo.Abp.Domain.Entities.Auditing;
+${DATA_ANNOTATIONS_USING}
 ${SOFT_DELETE_USING}
 
-namespace ${NAMESPACE}.${MODULE_NAME}
+namespace ${NAMESPACE}.Domain.${MODULE_NAME}
 {
     /// <summary>
     /// Represents a ${ENTITY_NAME} entity.

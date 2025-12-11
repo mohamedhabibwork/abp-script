@@ -1,6 +1,8 @@
 using AutoMapper;
+using ${NAMESPACE}.Domain.${MODULE_NAME};
+using ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.DTOs;
 
-namespace ${NAMESPACE}.${MODULE_NAME}
+namespace ${NAMESPACE}.Application.${MODULE_NAME}.Mapping
 {
     /// <summary>
     /// AutoMapper profile for ${MODULE_NAME} module.

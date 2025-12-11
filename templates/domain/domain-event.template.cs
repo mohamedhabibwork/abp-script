@@ -1,6 +1,6 @@
 using System;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.Events
+namespace ${NAMESPACE}.Domain.${MODULE_NAME}
 {
     /// <summary>
     /// Domain event for ${ENTITY_NAME}${EVENT_NAME}.

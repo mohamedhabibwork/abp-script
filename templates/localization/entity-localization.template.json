@@ -1,0 +1,39 @@
+{
+  "culture": "en",
+  "texts": {
+    "${MODULE_NAME}:DisplayName": "${MODULE_NAME}",
+    "${MODULE_NAME}:${ENTITY_NAME}": "${ENTITY_NAME}",
+    "${MODULE_NAME}:${ENTITY_NAME}:DisplayName": "${ENTITY_NAME}",
+    "${MODULE_NAME}:${ENTITY_NAME}:Name": "Name",
+    "${MODULE_NAME}:${ENTITY_NAME}:Description": "Description",
+    "${MODULE_NAME}:${ENTITY_NAME}:IsActive": "Is Active",
+    "${MODULE_NAME}:${ENTITY_NAME}:CreationTime": "Creation Time",
+    "${MODULE_NAME}:${ENTITY_NAME}:LastModificationTime": "Last Modification Time",
+    
+    "${MODULE_NAME}:${ENTITY_NAME}:Create": "Create ${ENTITY_NAME}",
+    "${MODULE_NAME}:${ENTITY_NAME}:Edit": "Edit ${ENTITY_NAME}",
+    "${MODULE_NAME}:${ENTITY_NAME}:Delete": "Delete ${ENTITY_NAME}",
+    "${MODULE_NAME}:${ENTITY_NAME}:List": "${ENTITY_NAME} List",
+    "${MODULE_NAME}:${ENTITY_NAME}:Details": "${ENTITY_NAME} Details",
+    
+    "${MODULE_NAME}:Validation:${ENTITY_NAME}:NameRequired": "${ENTITY_NAME} name is required",
+    "${MODULE_NAME}:Validation:${ENTITY_NAME}:NameLength": "${ENTITY_NAME} name must be between {0} and {1} characters",
+    "${MODULE_NAME}:Validation:${ENTITY_NAME}:DescriptionLength": "Description cannot exceed {0} characters",
+    "${MODULE_NAME}:Validation:${ENTITY_NAME}:AlreadyExists": "A ${ENTITY_NAME} with this name already exists",
+    
+    "${MODULE_NAME}:Permission:${ENTITY_NAME_PLURAL}": "Manage ${ENTITY_NAME_PLURAL}",
+    "${MODULE_NAME}:Permission:${ENTITY_NAME_PLURAL}.Create": "Create ${ENTITY_NAME_PLURAL}",
+    "${MODULE_NAME}:Permission:${ENTITY_NAME_PLURAL}.Edit": "Edit ${ENTITY_NAME_PLURAL}",
+    "${MODULE_NAME}:Permission:${ENTITY_NAME_PLURAL}.Delete": "Delete ${ENTITY_NAME_PLURAL}",
+    
+    "${MODULE_NAME}:Success:${ENTITY_NAME}:Created": "${ENTITY_NAME} created successfully",
+    "${MODULE_NAME}:Success:${ENTITY_NAME}:Updated": "${ENTITY_NAME} updated successfully",
+    "${MODULE_NAME}:Success:${ENTITY_NAME}:Deleted": "${ENTITY_NAME} deleted successfully",
+    
+    "${MODULE_NAME}:Error:${ENTITY_NAME}:NotFound": "${ENTITY_NAME} not found",
+    "${MODULE_NAME}:Error:${ENTITY_NAME}:CannotDelete": "Cannot delete ${ENTITY_NAME}. It may be in use."
+    
+    ${ADDITIONAL_LOCALIZATION_KEYS}
+  }
+}
+

@@ -1,4 +1,4 @@
-namespace ${NAMESPACE}.${MODULE_NAME}
+namespace ${NAMESPACE}.Domain.${MODULE_NAME}
 {
     /// <summary>
     /// Constants for ${ENTITY_NAME} entity.
