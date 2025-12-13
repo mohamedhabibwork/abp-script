@@ -1,7 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
-using Swashbuckle.AspNetCore.Annotations;
+// using Swashbuckle.AspNetCore.Annotations;
 using Volo.Abp;
 using Volo.Abp.Application.Dtos;
 using Volo.Abp.AspNetCore.Mvc;
@@ -19,7 +19,7 @@ namespace ${NAMESPACE}.HttpApi.${MODULE_NAME}.Controllers
     [RemoteService(Name = "${MODULE_NAME}")]
     [Route("api/${MODULE_NAME_LOWER}/${ENTITY_NAME_LOWER_PLURAL}")]
     [ApiExplorerSettings(GroupName = "${MODULE_NAME}")]
-    [SwaggerTag("Manage ${ENTITY_NAME_PLURAL}")]
+    // [SwaggerTag("Manage ${ENTITY_NAME_PLURAL}")]
     public class ${ENTITY_NAME}Controller : AbpController
     {
         private readonly I${ENTITY_NAME}AppService _${ENTITY_NAME_LOWER}AppService;

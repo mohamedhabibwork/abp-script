@@ -1,7 +1,7 @@
 {
   "entity": {
     "name": "Order",
-    "namespace": "TestApp",
+    "namespace": "EdeServices",
     "moduleName": "Sales",
     "idType": "long",
     "baseClass": "AuditedAggregateRoot<long>"

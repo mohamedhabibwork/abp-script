@@ -3,8 +3,8 @@ using Volo.Abp.Domain.Entities;
 using Volo.Abp.Domain.Entities.Auditing;
 ${DATA_ANNOTATIONS_USING}
 ${SOFT_DELETE_USING}
-using ${NAMESPACE}.${MODULE_NAME}.Events;
-using ${NAMESPACE}.${MODULE_NAME}.Constants;
+using ${NAMESPACE}.Domain.${MODULE_NAME}.Events;
+using ${NAMESPACE}.Domain.${MODULE_NAME}.Constants;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
 

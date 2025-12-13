@@ -1,4 +1,4 @@
-namespace ${NAMESPACE}.${MODULE_NAME}.Constants
+namespace ${NAMESPACE}.Domain.${MODULE_NAME}.Constants
 {
     /// <summary>
     /// Constants for ${ENTITY_NAME} entity.
@@ -9,7 +9,7 @@ namespace ${NAMESPACE}.${MODULE_NAME}.Constants
         /// Default sorting for ${ENTITY_NAME} queries.
         /// </summary>
         public const string DefaultSorting = "CreationTime desc";
-        
+
         /// <summary>
         /// Cache keys for ${ENTITY_NAME} caching.
         /// </summary>
@@ -32,6 +32,6 @@ namespace ${NAMESPACE}.${MODULE_NAME}.Constants
         public static class ValidationConstants
         {
 ${VALIDATION_CONSTANTS}
-        }
     }
+}
 }

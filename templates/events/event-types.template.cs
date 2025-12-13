@@ -1,4 +1,4 @@
-namespace ${NAMESPACE}.${MODULE_NAME}.Events
+namespace ${NAMESPACE}.Domain.${MODULE_NAME}.Events
 {
     /// <summary>
     /// Event type constants for ${ENTITY_NAME}.

@@ -43,6 +43,7 @@ NC='\033[0m' # No Color
 PROJECT_NAME=""
 PROJECT_ROOT=""
 NAMESPACE=""
+BASE_NAMESPACE=""
 MODULE_NAME=""
 ENTITY_NAME=""
 TEMPLATE_TYPE=""
@@ -507,40 +508,107 @@ parse_json_entity() {
         return 1
     fi
     
-    # Parse basic entity info
-    ENTITY_NAME=$(jq -r '.entity // ""' "$json_file")
-    MODULE_NAME=$(jq -r '.module // ""' "$json_file")
+    # Check if entity is an object (new structure) or string (old structure)
+    local entity_type=$(jq -r 'if .entity | type == "object" then "object" else "string" end' "$json_file")
     
-    if [ -z "$ENTITY_NAME" ] || [ -z "$MODULE_NAME" ]; then
-        log_error "JSON must contain 'entity' and 'module' fields"
-        return 1
-    fi
-    
-    # Parse base class if provided
-    if jq -e '.baseClass' "$json_file" > /dev/null 2>&1; then
-        ENTITY_BASE_CLASS=$(jq -r '.baseClass' "$json_file")
+    if [ "$entity_type" = "object" ]; then
+        # New structure: entity is an object
+        ENTITY_NAME=$(jq -r '.entity.name // ""' "$json_file")
+        MODULE_NAME=$(jq -r '.entity.moduleName // ""' "$json_file")
+        NAMESPACE=$(jq -r '.entity.namespace // ""' "$json_file")
+        
+        if [ -z "$ENTITY_NAME" ] || [ -z "$MODULE_NAME" ]; then
+            log_error "JSON entity object must contain 'name' and 'moduleName' fields"
+            return 1
+        fi
+        
+        # Parse base class if provided
+        if jq -e '.entity.baseClass' "$json_file" > /dev/null 2>&1; then
+            ENTITY_BASE_CLASS=$(jq -r '.entity.baseClass' "$json_file")
+        else
+            ENTITY_BASE_CLASS="FullAuditedAggregateRoot<Guid>"
+        fi
+        
+        # Parse ID type if provided
+        if jq -e '.entity.idType' "$json_file" > /dev/null 2>&1; then
+            ENTITY_ID_TYPE=$(jq -r '.entity.idType' "$json_file")
+        else
+            ENTITY_ID_TYPE="Guid"
+        fi
+        
+        # Parse DbContext name if provided
+        if jq -e '.entity.dbContextName' "$json_file" > /dev/null 2>&1; then
+            DB_CONTEXT_NAME=$(jq -r '.entity.dbContextName' "$json_file")
+        elif jq -e '.dbContext' "$json_file" > /dev/null 2>&1; then
+            DB_CONTEXT_NAME=$(jq -r '.dbContext' "$json_file")
+        else
+            DB_CONTEXT_NAME="${MODULE_NAME}DbContext"
+        fi
     else
-        ENTITY_BASE_CLASS="FullAuditedAggregateRoot<Guid>"
+        # Old structure: entity and module are strings
+        ENTITY_NAME=$(jq -r '.entity // ""' "$json_file")
+        MODULE_NAME=$(jq -r '.module // ""' "$json_file")
+        NAMESPACE=$(jq -r '.namespace // ""' "$json_file")
+        
+        if [ -z "$ENTITY_NAME" ] || [ -z "$MODULE_NAME" ]; then
+            log_error "JSON must contain 'entity' and 'module' fields"
+            return 1
+        fi
+        
+        # Parse base class if provided
+        if jq -e '.baseClass' "$json_file" > /dev/null 2>&1; then
+            ENTITY_BASE_CLASS=$(jq -r '.baseClass' "$json_file")
+        else
+            ENTITY_BASE_CLASS="FullAuditedAggregateRoot<Guid>"
+        fi
+        
+        # Parse ID type if provided
+        if jq -e '.idType' "$json_file" > /dev/null 2>&1; then
+            ENTITY_ID_TYPE=$(jq -r '.idType' "$json_file")
+        else
+            ENTITY_ID_TYPE="Guid"
+        fi
+        
+        # Parse DbContext name if provided
+        if jq -e '.dbContext' "$json_file" > /dev/null 2>&1; then
+            DB_CONTEXT_NAME=$(jq -r '.dbContext' "$json_file")
+        else
+            DB_CONTEXT_NAME="${MODULE_NAME}DbContext"
+        fi
     fi
     
-    # Parse ID type if provided
-    if jq -e '.idType' "$json_file" > /dev/null 2>&1; then
-        ENTITY_ID_TYPE=$(jq -r '.idType' "$json_file")
-    else
-        ENTITY_ID_TYPE="Guid"
+    # Try to get namespace from JSON, then auto-detect, then ask
+    if [ -z "$NAMESPACE" ]; then
+        # Try to auto-detect from project
+        if ! detect_project_info; then
+            # If still not found, try to load from config
+            load_config
+        fi
+        
+        # If still not found, ask user
+        if [ -z "$NAMESPACE" ]; then
+            echo ""
+            read -p "Enter namespace (e.g., MyCompany.MyProject): " NAMESPACE
+            if [ -z "$NAMESPACE" ]; then
+                log_error "Namespace is required"
+                return 1
+            fi
+        fi
     fi
     
-    # Parse DbContext name if provided
-    if jq -e '.dbContext' "$json_file" > /dev/null 2>&1; then
-        DB_CONTEXT_NAME=$(jq -r '.dbContext' "$json_file")
-    else
-        DB_CONTEXT_NAME="${MODULE_NAME}DbContext"
+    # Update base class with ID type if it contains <Guid> or doesn't have generic type
+    if echo "$ENTITY_BASE_CLASS" | grep -q "<Guid>"; then
+        ENTITY_BASE_CLASS=$(echo "$ENTITY_BASE_CLASS" | sed "s/<Guid>/<$ENTITY_ID_TYPE>/g")
+    elif ! echo "$ENTITY_BASE_CLASS" | grep -q "<"; then
+        # If base class doesn't have generic type, add it
+        ENTITY_BASE_CLASS="${ENTITY_BASE_CLASS}<${ENTITY_ID_TYPE}>"
     fi
     
-    # Update base class with ID type if it contains <Guid>
-    ENTITY_BASE_CLASS=$(echo "$ENTITY_BASE_CLASS" | sed "s/<Guid>/<$ENTITY_ID_TYPE>/g")
+    # Store base namespace (e.g., "MyCompany.MyProject")
+    # Templates will use: {BaseNamespace}.Application.{ModuleName}, {BaseNamespace}.Domain.{ModuleName}, etc.
+    BASE_NAMESPACE="$NAMESPACE"
     
-    log_success "Parsed entity: $ENTITY_NAME in module: $MODULE_NAME (Base: $ENTITY_BASE_CLASS, ID: $ENTITY_ID_TYPE)"
+    log_success "Parsed entity: $ENTITY_NAME in module: $MODULE_NAME (Namespace: $BASE_NAMESPACE, Base: $ENTITY_BASE_CLASS, ID: $ENTITY_ID_TYPE)"
     return 0
 }
 
@@ -579,13 +647,13 @@ generate_property_declaration() {
     
     local declaration=""
     
-    # Add validation attributes
+    # Add validation attributes - each on its own line
     if [ "$required" = "true" ]; then
-        declaration+="[Required]\n    "
+        declaration+="        [Required]\n"
     fi
     
     if [ -n "$max_length" ] && [ "$max_length" != "null" ]; then
-        declaration+="[StringLength($max_length)]\n    "
+        declaration+="        [StringLength($max_length)]\n"
     fi
     
     # Make type nullable if required is false or nullable is explicitly true
@@ -604,7 +672,7 @@ generate_property_declaration() {
     fi
     
     # Add property
-    declaration+="public $final_type $name { get; set; }"
+    declaration+="        public $final_type $name { get; set; }"
     
     echo -e "$declaration"
 }
@@ -1020,18 +1088,24 @@ process_template_with_properties() {
         local pair=$1
         local key="${pair%%=*}"
         local value="${pair#*=}"
-        # Escape special characters for sed-like replacement
-        value=$(echo "$value" | sed 's/[[\.*^$()+?{|]/\\&/g')
+        # Replace placeholder - don't escape the value, just replace the placeholder pattern
         content="${content//\$\{${key}\}/${value}}"
         shift
     done
     
     # Create output directory
     local output_dir=$(dirname "$output_file")
-    create_directory_if_not_exists "$output_dir"
+    if [ -n "$output_dir" ]; then
+        create_directory_if_not_exists "$output_dir"
+    fi
     
-    echo -e "$content" > "$output_file"
-    log_success "Generated: $output_file"
+    if [ -n "$output_file" ]; then
+        printf "%s" "$content" > "$output_file"
+        log_success "Generated: $output_file"
+    else
+        log_error "Output file path is empty"
+        return 1
+    fi
 }
 
 ################################################################################
@@ -1058,11 +1132,12 @@ generate_entity_from_json() {
     # Generate all components
     generate_constants_file "$properties"
     generate_permissions_file
-    generate_event_files
+    generate_event_files "$properties"
     generate_entity_files "$properties" "$relationships"
     generate_dto_files "$properties"
-    generate_repository_files
-    generate_service_files
+    generate_repository_files "$properties"
+    generate_manager_files "$properties"
+    generate_service_files "$properties"
     generate_controller_files
     generate_localization_entries
     
@@ -1087,43 +1162,46 @@ generate_entity_from_json() {
     local generated_files=()
     
     # Constants, permissions, and events
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/Constants/${ENTITY_NAME}Constants.cs")
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/Permissions/${MODULE_NAME}Permissions.cs")
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/Permissions/${MODULE_NAME}PermissionDefinitionProvider.cs")
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/Events/${ENTITY_NAME}Eto.cs")
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/Events/${ENTITY_NAME}EtoTypes.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}/Constants/${ENTITY_NAME}Constants.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/Permissions/${MODULE_NAME}Permissions.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/Permissions/${MODULE_NAME}PermissionDefinitionProvider.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}/Events/${ENTITY_NAME}Eto.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}/Events/${ENTITY_NAME}EtoTypes.cs")
     
     # Entity files
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/${ENTITY_NAME}.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}/${ENTITY_NAME}.cs")
     
     # DTO files
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Create${ENTITY_NAME}Dto.cs")
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Update${ENTITY_NAME}Dto.cs")
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/${ENTITY_NAME}Dto.cs")
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Get${ENTITY_NAME}ListInput.cs")
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/${ENTITY_NAME}LookupDto.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Create${ENTITY_NAME}Dto.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Update${ENTITY_NAME}Dto.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/${ENTITY_NAME}Dto.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Get${ENTITY_NAME}ListInput.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/${ENTITY_NAME}LookupDto.cs")
     
     # Repository files
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/I${ENTITY_NAME}Repository.cs")
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}/Repositories/EfCore${ENTITY_NAME}Repository.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}/I${ENTITY_NAME}Repository.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}/Repositories/EfCore${ENTITY_NAME}Repository.cs")
+    
+    # Manager files
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}/Services/${ENTITY_NAME}Manager.cs")
     
     # Service files
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/I${ENTITY_NAME}AppService.cs")
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application/${MODULE_NAME}/${ENTITY_NAME}AppService.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/I${ENTITY_NAME}AppService.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application/${MODULE_NAME}/${ENTITY_NAME}AppService.cs")
     
     # Controller files
-    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.HttpApi/${MODULE_NAME}/Controllers/${ENTITY_NAME}Controller.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.HttpApi/${MODULE_NAME}/Controllers/${ENTITY_NAME}Controller.cs")
     
     # Optional files
     if [ "$generate_seeder" = "true" ]; then
-        generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}/${ENTITY_NAME}DataSeeder.cs")
+        generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}/${ENTITY_NAME}DataSeeder.cs")
     fi
     if [ "$generate_validation" = "true" ]; then
-        generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application/${MODULE_NAME}/Validators/${ENTITY_NAME}Validator.cs")
+        generated_files+=("${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application/${MODULE_NAME}/Validators/${ENTITY_NAME}Validator.cs")
     fi
     if [ "$generate_tests" = "true" ]; then
-        generated_files+=("${PROJECT_ROOT}/test/${NAMESPACE}.Application.Tests/${MODULE_NAME}/${ENTITY_NAME}AppServiceTests.cs")
-        generated_files+=("${PROJECT_ROOT}/test/${NAMESPACE}.Domain.Tests/${MODULE_NAME}/${ENTITY_NAME}DomainTests.cs")
+        generated_files+=("${PROJECT_ROOT}/test/${BASE_NAMESPACE}.Application.Tests/${MODULE_NAME}/${ENTITY_NAME}AppServiceTests.cs")
+        generated_files+=("${PROJECT_ROOT}/test/${BASE_NAMESPACE}.Domain.Tests/${MODULE_NAME}/${ENTITY_NAME}DomainTests.cs")
     fi
     
     # Track the generated entity
@@ -1153,6 +1231,826 @@ get_id_assignment() {
         echo "Id = id;
             "
     fi
+}
+
+get_constructor_params() {
+    local properties=$1
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo ""
+        return
+    fi
+    
+    local params=""
+    local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+    
+    for ((i=0; i<prop_count; i++)); do
+        local prop=$(echo "$properties" | jq ".[$i]")
+        local is_foreign_key=$(echo "$prop" | jq -r '.isForeignKey // false')
+        
+        if [ "$is_foreign_key" != "true" ]; then
+            local name=$(echo "$prop" | jq -r '.name')
+            local prop_name_lower="$(echo ${name:0:1} | tr '[:upper:]' '[:lower:]')${name:1}"
+            params="${params}\n        /// <param name=\"${prop_name_lower}\">The ${name}.</param>"
+        fi
+    done
+    
+    echo -e "$params"
+}
+
+get_constructor_signature() {
+    local properties=$1
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo ""
+        return
+    fi
+    
+    local signature=""
+    local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+    
+    for ((i=0; i<prop_count; i++)); do
+        local prop=$(echo "$properties" | jq ".[$i]")
+        local is_foreign_key=$(echo "$prop" | jq -r '.isForeignKey // false')
+        
+        if [ "$is_foreign_key" != "true" ]; then
+            local name=$(echo "$prop" | jq -r '.name')
+            local type=$(echo "$prop" | jq -r '.type')
+            local required=$(echo "$prop" | jq -r '.required // false')
+            local nullable=$(echo "$prop" | jq -r '.nullable // false')
+            local prop_name_lower="$(echo ${name:0:1} | tr '[:upper:]' '[:lower:]')${name:1}"
+            
+            local final_type="$type"
+            if [ "$required" != "true" ] || [ "$nullable" = "true" ]; then
+                case "$type" in
+                    int|long|decimal|double|float|bool|DateTime|Guid)
+                        final_type="${type}?"
+                        ;;
+                    string)
+                        final_type="string?"
+                        ;;
+                esac
+            fi
+            
+            if [ -n "$signature" ]; then
+                signature="${signature}, "
+            fi
+            signature="${signature}${final_type} ${prop_name_lower}"
+        fi
+    done
+    
+    if [ -n "$signature" ]; then
+        signature=", ${signature}"
+    fi
+    
+    echo "$signature"
+}
+
+get_property_setters() {
+    local properties=$1
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo ""
+        return
+    fi
+    
+    local setters=""
+    local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+    
+    for ((i=0; i<prop_count; i++)); do
+        local prop=$(echo "$properties" | jq ".[$i]")
+        local is_foreign_key=$(echo "$prop" | jq -r '.isForeignKey // false')
+        
+        if [ "$is_foreign_key" != "true" ]; then
+            local name=$(echo "$prop" | jq -r '.name')
+            local prop_name_lower="$(echo ${name:0:1} | tr '[:upper:]' '[:lower:]')${name:1}"
+            setters="${setters}Set${name}(${prop_name_lower});\n            "
+        fi
+    done
+    
+    echo -e "$setters" | sed 's/[[:space:]]*$//'
+}
+
+get_setter_methods() {
+    local properties=$1
+    local entity_name=$2
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo ""
+        return
+    fi
+    
+    local methods=""
+    local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+    
+    for ((i=0; i<prop_count; i++)); do
+        local prop=$(echo "$properties" | jq ".[$i]")
+        local is_foreign_key=$(echo "$prop" | jq -r '.isForeignKey // false')
+        
+        if [ "$is_foreign_key" != "true" ]; then
+            local name=$(echo "$prop" | jq -r '.name')
+            local type=$(echo "$prop" | jq -r '.type')
+            local required=$(echo "$prop" | jq -r '.required // false')
+            local nullable=$(echo "$prop" | jq -r '.nullable // false')
+            local prop_name_lower="$(echo ${name:0:1} | tr '[:upper:]' '[:lower:]')${name:1}"
+            
+            local final_type="$type"
+            if [ "$required" != "true" ] || [ "$nullable" = "true" ]; then
+                case "$type" in
+                    int|long|decimal|double|float|bool|DateTime|Guid)
+                        final_type="${type}?"
+                        ;;
+                    string)
+                        final_type="string?"
+                        ;;
+                esac
+            fi
+            
+            local validation=""
+            if [ "$type" = "string" ] && [ "$required" = "true" ]; then
+                local max_length=$(echo "$prop" | jq -r '.maxLength // "128"')
+                validation="Check.NotNullOrWhiteSpace(${prop_name_lower}, nameof(${prop_name_lower}), ${entity_name}Constants.ValidationConstants.${name}MaxLength);"
+            else
+                validation="${prop_name_lower}"
+            fi
+            
+            methods="${methods}
+        /// <summary>
+        /// Sets the ${name}.
+        /// </summary>
+        /// <param name=\"${prop_name_lower}\">The ${name} to set.</param>
+        public ${entity_name} Set${name}(${final_type} ${prop_name_lower})
+        {
+            ${name} = ${validation};
+            return this;
+        }
+
+"
+        fi
+    done
+    
+    echo -e "$methods" | sed 's/[[:space:]]*$//'
+}
+
+get_publish_event_method() {
+    local base_class=$1
+    local entity_name=$2
+    
+    if echo "$base_class" | grep -q "AggregateRoot" && ! echo "$base_class" | grep -q "Entity<Guid>"; then
+        cat <<EOF
+        /// <summary>
+        /// Publishes a distributed event.
+        /// </summary>
+        /// <param name="eto">The event transfer object.</param>
+        public void PublishDistributedEvent(${entity_name}Eto eto)
+        {
+            AddDistributedEvent(eto);
+        }
+
+EOF
+    fi
+}
+
+get_value_object_methods() {
+    local base_class=$1
+    local properties=$2
+    
+    if ! echo "$base_class" | grep -q "ValueObject"; then
+        echo ""
+        return
+    fi
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo ""
+        return
+    fi
+    
+    local yields=""
+    local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+    
+    for ((i=0; i<prop_count; i++)); do
+        local prop=$(echo "$properties" | jq ".[$i]")
+        local name=$(echo "$prop" | jq -r '.name')
+        yields="${yields}            yield return ${name};\n"
+    done
+    
+    cat <<EOF
+        protected override IEnumerable<object> GetAtomicValues()
+        {
+${yields}        }
+
+EOF
+}
+
+get_update_method_params() {
+    local properties=$1
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo ""
+        return
+    fi
+    
+    local params=""
+    local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+    
+    for ((i=0; i<prop_count; i++)); do
+        local prop=$(echo "$properties" | jq ".[$i]")
+        local is_foreign_key=$(echo "$prop" | jq -r '.isForeignKey // false')
+        
+        if [ "$is_foreign_key" != "true" ]; then
+            local name=$(echo "$prop" | jq -r '.name')
+            local prop_name_lower="$(echo ${name:0:1} | tr '[:upper:]' '[:lower:]')${name:1}"
+            params="${params}\n        /// <param name=\"${prop_name_lower}\">The ${name}.</param>"
+        fi
+    done
+    
+    echo -e "$params"
+}
+
+get_update_method_signature() {
+    local properties=$1
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo ""
+        return
+    fi
+    
+    local signature=""
+    local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+    
+    for ((i=0; i<prop_count; i++)); do
+        local prop=$(echo "$properties" | jq ".[$i]")
+        local is_foreign_key=$(echo "$prop" | jq -r '.isForeignKey // false')
+        
+        if [ "$is_foreign_key" != "true" ]; then
+            local name=$(echo "$prop" | jq -r '.name')
+            local type=$(echo "$prop" | jq -r '.type')
+            local required=$(echo "$prop" | jq -r '.required // false')
+            local nullable=$(echo "$prop" | jq -r '.nullable // false')
+            local prop_name_lower="$(echo ${name:0:1} | tr '[:upper:]' '[:lower:]')${name:1}"
+            
+            local final_type="$type"
+            if [ "$required" != "true" ] || [ "$nullable" = "true" ]; then
+                case "$type" in
+                    int|long|decimal|double|float|bool|DateTime|Guid)
+                        final_type="${type}?"
+                        ;;
+                    string)
+                        final_type="string?"
+                        ;;
+                esac
+            fi
+            
+            if [ -n "$signature" ]; then
+                signature="${signature}, "
+            fi
+            signature="${signature}${final_type} ${prop_name_lower}"
+        fi
+    done
+    
+    echo "$signature"
+}
+
+get_update_setters() {
+    local properties=$1
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo ""
+        return
+    fi
+    
+    local setters=""
+    local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+    
+    for ((i=0; i<prop_count; i++)); do
+        local prop=$(echo "$properties" | jq ".[$i]")
+        local is_foreign_key=$(echo "$prop" | jq -r '.isForeignKey // false')
+        
+        if [ "$is_foreign_key" != "true" ]; then
+            local name=$(echo "$prop" | jq -r '.name')
+            local prop_name_lower="$(echo ${name:0:1} | tr '[:upper:]' '[:lower:]')${name:1}"
+            setters="${setters}Set${name}(${prop_name_lower});\n            "
+        fi
+    done
+    
+    echo -e "$setters" | sed 's/[[:space:]]*$//'
+}
+
+get_manager_create_method() {
+    local properties=$1
+    local entity_name=$2
+    local id_type=$3
+    local module_name=$4
+    
+    local entity_name_lower="$(echo ${entity_name:0:1} | tr '[:upper:]' '[:lower:]')${entity_name:1}"
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo ""
+        return
+    fi
+    
+    # Check if Name property exists
+    local has_name=false
+    local name_prop=$(echo "$properties" | jq '.[] | select(.name == "Name")')
+    if [ -n "$name_prop" ]; then
+        has_name=true
+    fi
+    
+    # Build method parameters
+    local method_params=""
+    local param_docs=""
+    local setter_calls=""
+    local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+    
+    # First, add Name parameter if it exists
+    if [ "$has_name" = true ]; then
+        method_params="string name"
+        param_docs="        /// <param name=\"name\">The name of the ${entity_name}.</param>\n"
+    fi
+    
+    # Then add other properties
+    for ((i=0; i<prop_count; i++)); do
+        local prop=$(echo "$properties" | jq ".[$i]")
+        local name=$(echo "$prop" | jq -r '.name')
+        local is_foreign_key=$(echo "$prop" | jq -r '.isForeignKey // false')
+        
+        if [ "$is_foreign_key" != "true" ] && [ "$name" != "Id" ] && [ "$name" != "Name" ]; then
+            local type=$(echo "$prop" | jq -r '.type')
+            local required=$(echo "$prop" | jq -r '.required // false')
+            local nullable=$(echo "$prop" | jq -r '.nullable // false')
+            local prop_name_lower="$(echo ${name:0:1} | tr '[:upper:]' '[:lower:]')${name:1}"
+            
+            local final_type="$type"
+            if [ "$required" != "true" ] || [ "$nullable" = "true" ]; then
+                case "$type" in
+                    int|long|decimal|double|float|bool|DateTime|Guid)
+                        final_type="${type}?"
+                        ;;
+                    string)
+                        final_type="string?"
+                        ;;
+                esac
+            fi
+            
+            if [ -n "$method_params" ]; then
+                method_params="${method_params}, "
+            fi
+            method_params="${method_params}${final_type} ${prop_name_lower} = null"
+            param_docs="${param_docs}        /// <param name=\"${prop_name_lower}\">The ${name}.</param>\n"
+            
+            if [ -n "$setter_calls" ]; then
+                setter_calls="${setter_calls}\n            "
+            fi
+            setter_calls="${setter_calls}if (${prop_name_lower} != null)\n            {\n                entity.Set${name}(${prop_name_lower});\n            }"
+        fi
+    done
+    
+    # Generate ID creation based on type
+    local id_creation=""
+    case "$id_type" in
+        Guid)
+            id_creation="GuidGenerator.Create()"
+            ;;
+        long|int)
+            id_creation="0"
+            ;;
+        *)
+            id_creation="GuidGenerator.Create()"
+            ;;
+    esac
+    
+    cat <<EOF
+        /// <summary>
+        /// Creates a new ${entity_name} with validation.
+        /// </summary>
+$(echo -e "$param_docs")        /// <returns>The created ${entity_name}.</returns>
+        /// <exception cref="BusinessException">Thrown when a ${entity_name} with the same name already exists.</exception>
+        public async Task<${entity_name}> CreateAsync(${method_params})
+        {
+EOF
+    
+    if [ "$has_name" = true ]; then
+        cat <<EOF
+            Check.NotNullOrWhiteSpace(name, nameof(name));
+
+            // Check for duplicate name
+            var existingEntity = await _${entity_name_lower}Repository.FindByNameAsync(name);
+            if (existingEntity != null)
+            {
+                throw new BusinessException(${module_name}DomainErrorCodes.${entity_name}AlreadyExists)
+                    .WithData("name", name);
+            }
+
+EOF
+    fi
+    
+    cat <<EOF
+            var entity = new ${entity_name}(
+                ${id_creation}
+EOF
+    
+    if [ "$has_name" = true ]; then
+        cat <<EOF
+,
+                name
+EOF
+    fi
+    
+    cat <<EOF
+            );
+
+$(echo -e "$setter_calls")
+
+            return entity;
+        }
+
+EOF
+}
+
+get_manager_update_name_method() {
+    local properties=$1
+    local entity_name=$2
+    local module_name=$3
+    
+    local entity_name_lower="$(echo ${entity_name:0:1} | tr '[:upper:]' '[:lower:]')${entity_name:1}"
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo ""
+        return
+    fi
+    
+    # Check if Name property exists
+    local name_prop=$(echo "$properties" | jq '.[] | select(.name == "Name")')
+    if [ -z "$name_prop" ]; then
+        echo ""
+        return
+    fi
+    
+    cat <<EOF
+        /// <summary>
+        /// Updates the name of a ${entity_name} with validation.
+        /// </summary>
+        /// <param name="entity">The ${entity_name} to update.</param>
+        /// <param name="newName">The new name.</param>
+        /// <exception cref="BusinessException">Thrown when a ${entity_name} with the same name already exists.</exception>
+        public async Task UpdateNameAsync(${entity_name} entity, string newName)
+        {
+            Check.NotNull(entity, nameof(entity));
+            Check.NotNullOrWhiteSpace(newName, nameof(newName));
+
+            if (entity.Name == newName)
+            {
+                return;
+            }
+
+            var existingEntity = await _${entity_name_lower}Repository.FindByNameAsync(newName);
+            if (existingEntity != null && existingEntity.Id != entity.Id)
+            {
+                throw new BusinessException(${module_name}DomainErrorCodes.${entity_name}AlreadyExists)
+                    .WithData("name", newName);
+            }
+
+            entity.SetName(newName);
+        }
+
+EOF
+}
+
+get_manager_validate_activation_method() {
+    local properties=$1
+    local entity_name=$2
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo ""
+        return
+    fi
+    
+    # Check if IsActive property exists
+    local is_active_prop=$(echo "$properties" | jq '.[] | select(.name == "IsActive")')
+    if [ -z "$is_active_prop" ]; then
+        echo ""
+        return
+    fi
+    
+    cat <<EOF
+        /// <summary>
+        /// Performs business validation before activating a ${entity_name}.
+        /// </summary>
+        /// <param name="entity">The ${entity_name} to activate.</param>
+        /// <exception cref="BusinessException">Thrown when validation fails.</exception>
+        public async Task ValidateActivationAsync(${entity_name} entity)
+        {
+            Check.NotNull(entity, nameof(entity));
+
+            // Add business rules for activation
+            // For example, check if all required fields are filled
+
+            await Task.CompletedTask;
+        }
+
+EOF
+}
+
+get_repository_methods() {
+    local properties=$1
+    local entity_name=$2
+    local id_type=$3
+    
+    cat <<EOF
+        /// <summary>
+        /// Finds a ${entity_name} by name.
+        /// </summary>
+        /// <param name="name">The name to search for.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The ${entity_name} if found; otherwise, null.</returns>
+        public virtual async Task<${entity_name}?> FindByNameAsync(
+            string name,
+            CancellationToken cancellationToken = default)
+        {
+            var dbSet = await GetDbSetAsync();
+            return await dbSet
+                .Where(x => x.Name == name)
+                .FirstOrDefaultAsync(GetCancellationToken(cancellationToken));
+        }
+
+        /// <summary>
+        /// Gets a list of ${entity_name} entities by filter.
+        /// </summary>
+        /// <param name="skipCount">Number of items to skip.</param>
+        /// <param name="maxResultCount">Maximum number of items to return.</param>
+        /// <param name="sorting">Sorting expression.</param>
+        /// <param name="filter">Filter text.</param>
+        /// <param name="isActive">Filter by active status.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>List of ${entity_name} entities.</returns>
+        public virtual async Task<List<${entity_name}>> GetListAsync(
+            int skipCount = 0,
+            int maxResultCount = 10,
+            string? sorting = null,
+            string? filter = null,
+            bool? isActive = null,
+            CancellationToken cancellationToken = default)
+        {
+            var dbSet = await GetDbSetAsync();
+            
+            return await dbSet
+                .WhereIf(
+                    !string.IsNullOrWhiteSpace(filter),
+                    x => x.Name.Contains(filter!) || 
+                         (x.Description != null && x.Description.Contains(filter!))
+                )
+                .WhereIf(isActive.HasValue, x => x.IsActive == isActive!.Value)
+                .OrderBy(sorting ?? nameof(${entity_name}.Name))
+                .Skip(skipCount)
+                .Take(maxResultCount)
+                .ToListAsync(GetCancellationToken(cancellationToken));
+        }
+
+        /// <summary>
+        /// Gets the count of ${entity_name} entities by filter.
+        /// </summary>
+        /// <param name="filter">Filter text.</param>
+        /// <param name="isActive">Filter by active status.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>Count of ${entity_name} entities.</returns>
+        public virtual async Task<long> GetCountAsync(
+            string? filter = null,
+            bool? isActive = null,
+            CancellationToken cancellationToken = default)
+        {
+            var dbSet = await GetDbSetAsync();
+            
+            return await dbSet
+                .WhereIf(
+                    !string.IsNullOrWhiteSpace(filter),
+                    x => x.Name.Contains(filter!) || 
+                         (x.Description != null && x.Description.Contains(filter!))
+                )
+                .WhereIf(isActive.HasValue, x => x.IsActive == isActive!.Value)
+                .LongCountAsync(GetCancellationToken(cancellationToken));
+        }
+
+        /// <summary>
+        /// Gets all active ${entity_name} entities.
+        /// </summary>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>List of active ${entity_name} entities.</returns>
+        public virtual async Task<List<${entity_name}>> GetActiveListAsync(
+            CancellationToken cancellationToken = default)
+        {
+            var dbSet = await GetDbSetAsync();
+            
+            return await dbSet
+                .Where(x => x.IsActive)
+                .OrderBy(x => x.Name)
+                .ToListAsync(GetCancellationToken(cancellationToken));
+        }
+
+        /// <summary>
+        /// Checks if a ${entity_name} with the given name exists.
+        /// </summary>
+        /// <param name="name">The name to check.</param>
+        /// <param name="excludeId">ID to exclude from the check (for updates).</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>True if exists; otherwise, false.</returns>
+        public virtual async Task<bool> ExistsByNameAsync(
+            string name,
+            ${id_type}? excludeId = null,
+            CancellationToken cancellationToken = default)
+        {
+            var dbSet = await GetDbSetAsync();
+            
+            return await dbSet
+                .Where(x => x.Name == name)
+                .WhereIf(excludeId.HasValue, x => x.Id != excludeId!.Value)
+                .AnyAsync(GetCancellationToken(cancellationToken));
+        }
+EOF
+}
+
+get_publish_create_event() {
+    local entity_name=$1
+    local base_class=$2
+    
+    if echo "$base_class" | grep -q "AggregateRoot" && ! echo "$base_class" | grep -q "Entity<Guid>"; then
+        cat <<EOF
+            var eto = ObjectMapper.Map<${entity_name}, ${entity_name}Eto>(entity);
+            eto.CreationTime = DateTime.UtcNow;
+            entity.PublishDistributedEvent(eto);
+EOF
+    fi
+}
+
+get_publish_update_event() {
+    local entity_name=$1
+    local base_class=$2
+    
+    if echo "$base_class" | grep -q "AggregateRoot" && ! echo "$base_class" | grep -q "Entity<Guid>"; then
+        cat <<EOF
+            var eto = ObjectMapper.Map<${entity_name}, ${entity_name}Eto>(entity);
+            eto.LastModificationTime = DateTime.UtcNow;
+            entity.PublishDistributedEvent(eto);
+EOF
+    fi
+}
+
+get_apply_default_sorting() {
+    local id_type=$1
+    local entity_name=$2
+    
+    if [ "$id_type" != "Guid" ]; then
+        cat <<EOF
+        protected override IQueryable<${entity_name}> ApplyDefaultSorting(IQueryable<${entity_name}> query)
+        {
+            return query.OrderByDescending(x => x.CreationTime);
+        }
+
+EOF
+    fi
+}
+
+get_search_filter_logic() {
+    local properties=$1
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo "            // Add custom search filter logic here"
+        return
+    fi
+    
+    local string_props=$(echo "$properties" | jq -r '.[] | select(.type == "string" and .name != "Id" and (.isForeignKey != true)) | .name')
+    
+    if [ -z "$string_props" ]; then
+        echo "            // Add custom search filter logic here"
+        return
+    fi
+    
+    local conditions=""
+    while IFS= read -r prop; do
+        if [ -n "$conditions" ]; then
+            conditions="${conditions} || "
+        fi
+        conditions="${conditions}x.${prop} != null && x.${prop}.ToLower().Contains(searchTerm)"
+    done <<< "$string_props"
+    
+    cat <<EOF
+            if (!input.Search.IsNullOrEmpty())
+            {
+                string searchTerm = input.Search.ToLower();
+                data = data.Where(x => ${conditions});
+            }
+EOF
+}
+
+get_filter_properties() {
+    local properties=$1
+    local id_type=$2
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo "        // Add additional filter properties here"
+        return
+    fi
+    
+    local filter_props=""
+    local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+    
+    for ((i=0; i<prop_count; i++)); do
+        local prop=$(echo "$properties" | jq ".[$i]")
+        local name=$(echo "$prop" | jq -r '.name')
+        local type=$(echo "$prop" | jq -r '.type')
+        local is_foreign_key=$(echo "$prop" | jq -r '.isForeignKey // false')
+        
+        # Skip Id, Name, Description, and IsActive (already handled)
+        if [ "$name" = "Id" ] || [ "$name" = "Name" ] || [ "$name" = "Description" ] || [ "$name" = "IsActive" ]; then
+            continue
+        fi
+        
+        # Include foreign key properties for filtering by related entities
+        if [ "$is_foreign_key" = "true" ]; then
+            filter_props="${filter_props}
+        /// <summary>
+        /// Gets or sets the filter for ${name}.
+        /// </summary>
+        public ${id_type}? ${name} { get; set; }
+
+"
+        # Include boolean properties (except IsActive which is already there)
+        elif [ "$type" = "bool" ]; then
+            filter_props="${filter_props}
+        /// <summary>
+        /// Gets or sets a value to filter by ${name}.
+        /// </summary>
+        public bool? ${name} { get; set; }
+
+"
+        # Include enum properties
+        elif echo "$type" | grep -qi "enum"; then
+            filter_props="${filter_props}
+        /// <summary>
+        /// Gets or sets the filter for ${name}.
+        /// </summary>
+        public ${type}? ${name} { get; set; }
+
+"
+        fi
+    done
+    
+    if [ -z "$filter_props" ]; then
+        echo "        // Add additional filter properties here"
+    else
+        echo -e "$filter_props" | sed 's/[[:space:]]*$//'
+    fi
+}
+
+get_foreign_key_names() {
+    local properties=$1
+    
+    if ! command -v jq &> /dev/null || [ "$properties" = "[]" ] || [ -z "$properties" ]; then
+        echo ""
+        return
+    fi
+    
+    local fk_props=""
+    local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+    
+    for ((i=0; i<prop_count; i++)); do
+        local prop=$(echo "$properties" | jq ".[$i]")
+        local is_foreign_key=$(echo "$prop" | jq -r '.isForeignKey // false')
+        
+        if [ "$is_foreign_key" = "true" ]; then
+            local name=$(echo "$prop" | jq -r '.name')
+            local type=$(echo "$prop" | jq -r '.type')
+            local required=$(echo "$prop" | jq -r '.required // false')
+            
+            # Determine if nullable
+            local nullable_type="$type"
+            if [ "$required" != "true" ]; then
+                case "$type" in
+                    int|long|decimal|double|float|bool|DateTime|Guid)
+                        nullable_type="${type}?"
+                        ;;
+                    string)
+                        nullable_type="string?"
+                        ;;
+                esac
+            fi
+            
+            # Generate display name from foreign key name (e.g., CustomerId -> Customer)
+            local display_name="$name"
+            if echo "$name" | grep -q "Id$"; then
+                display_name="${name%Id}"
+            fi
+            
+            fk_props="${fk_props}
+        /// <summary>
+        /// Gets or sets the ${display_name} ID.
+        /// </summary>
+        public ${nullable_type} ${name} { get; set; }
+
+"
+        fi
+    done
+    
+    echo -e "$fk_props" | sed 's/[[:space:]]*$//'
 }
 
 generate_entity_files() {
@@ -1197,11 +2095,63 @@ using Volo.Abp;"
 using System.ComponentModel.DataAnnotations;"
     fi
     
+    # Set output file path
     local template_file="${TEMPLATES_DIR}/domain/entity.template.cs"
-    local output_file="${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/${ENTITY_NAME}.cs"
+    local output_file="${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}/${ENTITY_NAME}.cs"
     
-    process_template_with_properties "$template_file" "$output_file" "$properties" \
-        "NAMESPACE=$NAMESPACE" \
+    # Generate entity-specific code
+    local constructor_params=$(get_constructor_params "$properties")
+    local constructor_signature=$(get_constructor_signature "$properties")
+    local property_setters=$(get_property_setters "$properties")
+    local setter_methods=$(get_setter_methods "$properties" "$ENTITY_NAME")
+    local publish_event_method=$(get_publish_event_method "$ENTITY_BASE_CLASS" "$ENTITY_NAME")
+    local value_object_methods=$(get_value_object_methods "$ENTITY_BASE_CLASS" "$properties")
+    local update_method_params=$(get_update_method_params "$properties")
+    local update_method_signature=$(get_update_method_signature "$properties")
+    local update_setters=$(get_update_setters "$properties")
+    
+    # Generate relationships code
+    local relationships_code=""
+    if command -v jq &> /dev/null && [ "$relationships" != "[]" ] && [ -n "$relationships" ]; then
+        local rel_count=$(echo "$relationships" | jq 'length' 2>/dev/null || echo "0")
+        for ((i=0; i<rel_count; i++)); do
+            local rel=$(echo "$relationships" | jq ".[$i]")
+            local rel_type=$(echo "$rel" | jq -r '.type')
+            local rel_name=$(echo "$rel" | jq -r '.name')
+            local rel_entity=$(echo "$rel" | jq -r '.relatedEntity')
+            local fk=$(echo "$rel" | jq -r '.foreignKey')
+            
+            if [ "$rel_type" = "ManyToOne" ]; then
+                relationships_code="${relationships_code}\n        /// <summary>\n        /// Gets or sets the ${rel_name} navigation property.\n        /// </summary>\n        [ForeignKey(\"${fk}\")]\n        public virtual ${rel_entity}? ${rel_name} { get; set; }\n\n    "
+            elif [ "$rel_type" = "OneToMany" ]; then
+                relationships_code="${relationships_code}\n        /// <summary>\n        /// Gets or sets the ${rel_name} collection.\n        /// </summary>\n        public virtual ICollection<${rel_entity}> ${rel_name} { get; set; } = new List<${rel_entity}>();\n\n    "
+            fi
+        done
+    fi
+    relationships_code=$(echo -e "$relationships_code" | sed 's/[[:space:]]*$//')
+    
+    # Load template and replace placeholders manually since we have complex replacements
+    local template_content=$(cat "$template_file")
+    
+    # Replace all placeholders
+    template_content="${template_content//\$\{CONSTRUCTOR_PARAMS\}/${constructor_params}}"
+    template_content="${template_content//\$\{CONSTRUCTOR_SIGNATURE\}/${constructor_signature}}"
+    template_content="${template_content//\$\{PROPERTY_SETTERS\}/${property_setters}}"
+    template_content="${template_content//\$\{SETTER_METHODS\}/${setter_methods}}"
+    template_content="${template_content//\$\{PUBLISH_EVENT_METHOD\}/${publish_event_method}}"
+    template_content="${template_content//\$\{VALUE_OBJECT_METHODS\}/${value_object_methods}}"
+    template_content="${template_content//\$\{UPDATE_METHOD_PARAMS\}/${update_method_params}}"
+    template_content="${template_content//\$\{UPDATE_METHOD_SIGNATURE\}/${update_method_signature}}"
+    template_content="${template_content//\$\{UPDATE_SETTERS\}/${update_setters}}"
+    template_content="${template_content//\$\{RELATIONSHIPS\}/${relationships_code}}"
+    
+    # Create temp file with replaced content
+    local temp_file=$(mktemp)
+    echo -e "$template_content" > "$temp_file"
+    
+    # Now process with standard template processing for remaining variables
+    process_template_with_properties "$temp_file" "$output_file" "$properties" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
         "ENTITY_NAME_LOWER=$entity_name_lower" \
@@ -1211,6 +2161,9 @@ using System.ComponentModel.DataAnnotations;"
         "ID_ASSIGNMENT=$id_assignment" \
         "DATA_ANNOTATIONS_USING=$data_annotations_using" \
         "SOFT_DELETE_USING=$soft_delete_using"
+    
+    # Clean up temp file
+    rm -f "$temp_file"
 }
 
 generate_dto_files() {
@@ -1218,51 +2171,73 @@ generate_dto_files() {
     
     log_step "Generating DTO files..."
     
+    # Generate foreign key name properties
+    local foreign_key_names=$(get_foreign_key_names "$properties")
+    
     # Create DTO (in Contracts)
     process_template_with_properties \
         "${TEMPLATES_DIR}/application/dto-create.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Create${ENTITY_NAME}Dto.cs" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Create${ENTITY_NAME}Dto.cs" \
         "$properties" \
-        "NAMESPACE=$NAMESPACE" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME"
     
     # Update DTO (in Contracts)
     process_template_with_properties \
         "${TEMPLATES_DIR}/application/dto-update.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Update${ENTITY_NAME}Dto.cs" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Update${ENTITY_NAME}Dto.cs" \
         "$properties" \
-        "NAMESPACE=$NAMESPACE" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME"
     
-    # Entity DTO (in Contracts)
+    # Entity DTO (in Contracts) - need to handle FOREIGN_KEY_NAMES placeholder
+    local template_file="${TEMPLATES_DIR}/application/dto-entity.template.cs"
+    local output_file="${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/${ENTITY_NAME}Dto.cs"
+    
+    # Load template and replace FOREIGN_KEY_NAMES manually
+    local template_content=$(cat "$template_file")
+    template_content="${template_content//\$\{FOREIGN_KEY_NAMES\}/$foreign_key_names}"
+    
+    # Create temp file with replaced content
+    local temp_file=$(mktemp)
+    echo -e "$template_content" > "$temp_file"
+    
+    # Now process with standard template processing
     process_template_with_properties \
-        "${TEMPLATES_DIR}/application/dto-entity.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/${ENTITY_NAME}Dto.cs" \
+        "$temp_file" \
+        "$output_file" \
         "$properties" \
-        "NAMESPACE=$NAMESPACE" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME"
+    
+    # Clean up temp file
+    rm -f "$temp_file"
     
     # List Input DTO (in Contracts)
+    local filter_properties=$(get_filter_properties "$properties" "$ENTITY_ID_TYPE")
     process_template \
         "${TEMPLATES_DIR}/application/dto-list-input.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Get${ENTITY_NAME}ListInput.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/Get${ENTITY_NAME}ListInput.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
-        "ENTITY_NAME=$ENTITY_NAME"
+        "ENTITY_NAME=$ENTITY_NAME" \
+        "FILTER_PROPERTIES=$filter_properties"
     
     # Lookup DTO (in Contracts)
     process_template \
         "${TEMPLATES_DIR}/application/dto-lookup.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/${ENTITY_NAME}LookupDto.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/DTOs/${ENTITY_NAME}LookupDto.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME"
 }
 
 generate_repository_files() {
+    local properties=$1
+    
     log_step "Generating repository files..."
     
     local entity_name_lower="$(echo ${ENTITY_NAME:0:1} | tr '[:upper:]' '[:lower:]')${ENTITY_NAME:1}"
@@ -1272,53 +2247,123 @@ generate_repository_files() {
         DB_CONTEXT_NAME="${MODULE_NAME}DbContext"
     fi
     
+    # Generate repository methods
+    local repository_methods=$(get_repository_methods "$properties" "$ENTITY_NAME" "$ENTITY_ID_TYPE")
+    
     # Repository interface
     process_template \
         "${TEMPLATES_DIR}/domain/repository-interface.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/I${ENTITY_NAME}Repository.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}/I${ENTITY_NAME}Repository.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
         "ENTITY_NAME_LOWER=$entity_name_lower" \
         "ID_TYPE=$ENTITY_ID_TYPE"
     
-    # EF Repository
+    # EF Repository - need to handle REPOSITORY_METHODS placeholder
+    local repo_template=$(cat "${TEMPLATES_DIR}/infrastructure/ef-repository.template.cs")
+    repo_template="${repo_template//\$\{REPOSITORY_METHODS\}/$repository_methods}"
+    
+    # Create temp file with replaced content
+    local temp_file=$(mktemp)
+    echo "$repo_template" > "$temp_file"
+    
     process_template \
-        "${TEMPLATES_DIR}/infrastructure/ef-repository.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}/Repositories/EfCore${ENTITY_NAME}Repository.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "$temp_file" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}/Repositories/EfCore${ENTITY_NAME}Repository.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
         "ENTITY_NAME_LOWER=$entity_name_lower" \
         "ID_TYPE=$ENTITY_ID_TYPE" \
         "DB_CONTEXT_NAME=$DB_CONTEXT_NAME"
+    
+    rm -f "$temp_file"
+}
+
+generate_manager_files() {
+    local properties=$1
+    
+    log_step "Generating Manager file..."
+    
+    local entity_name_lower="$(echo ${ENTITY_NAME:0:1} | tr '[:upper:]' '[:lower:]')${ENTITY_NAME:1}"
+    
+    # Generate Manager methods
+    local create_method=$(get_manager_create_method "$properties" "$ENTITY_NAME" "$ENTITY_ID_TYPE" "$MODULE_NAME")
+    local update_name_method=$(get_manager_update_name_method "$properties" "$ENTITY_NAME" "$MODULE_NAME")
+    local validate_activation_method=$(get_manager_validate_activation_method "$properties" "$ENTITY_NAME")
+    
+    # Load template and replace placeholders manually since we have complex replacements
+    local template_content=$(cat "${TEMPLATES_DIR}/domain/domain-service.template.cs")
+    
+    # Replace method placeholders
+    template_content="${template_content//\$\{CREATE_METHOD\}/$create_method}"
+    template_content="${template_content//\$\{UPDATE_NAME_METHOD\}/$update_name_method}"
+    template_content="${template_content//\$\{VALIDATE_ACTIVATION_METHOD\}/$validate_activation_method}"
+    
+    # Create temp file with replaced content
+    local temp_file=$(mktemp)
+    echo -e "$template_content" > "$temp_file"
+    
+    # Now process with standard template processing for remaining variables
+    process_template \
+        "$temp_file" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}/Services/${ENTITY_NAME}Manager.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
+        "MODULE_NAME=$MODULE_NAME" \
+        "ENTITY_NAME=$ENTITY_NAME" \
+        "ENTITY_NAME_LOWER=$entity_name_lower"
+    
+    # Clean up temp file
+    rm -f "$temp_file"
 }
 
 generate_service_files() {
+    local properties=$1
+    
     log_step "Generating service files..."
     
     local entity_name_lower="$(echo ${ENTITY_NAME:0:1} | tr '[:upper:]' '[:lower:]')${ENTITY_NAME:1}"
     local entity_name_plural="${ENTITY_NAME}s"
     
+    # Generate event publishing and other code
+    local publish_create_event=$(get_publish_create_event "$ENTITY_NAME" "$ENTITY_BASE_CLASS")
+    local publish_update_event=$(get_publish_update_event "$ENTITY_NAME" "$ENTITY_BASE_CLASS")
+    local apply_default_sorting=$(get_apply_default_sorting "$ENTITY_ID_TYPE" "$ENTITY_NAME")
+    local search_filter_logic=$(get_search_filter_logic "$properties")
+    
     # Service interface
     process_template \
         "${TEMPLATES_DIR}/application/app-service-interface.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Application/${MODULE_NAME}/I${ENTITY_NAME}AppService.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/I${ENTITY_NAME}AppService.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
         "ENTITY_NAME_LOWER=$entity_name_lower" \
         "ENTITY_NAME_PLURAL=$entity_name_plural"
     
-    # Service implementation
+    # Service implementation - need to handle placeholders
+    local service_template=$(cat "${TEMPLATES_DIR}/application/app-service-crud.template.cs")
+    service_template="${service_template//\$\{PUBLISH_CREATE_EVENT\}/$publish_create_event}"
+    service_template="${service_template//\$\{PUBLISH_UPDATE_EVENT\}/$publish_update_event}"
+    service_template="${service_template//\$\{APPLY_DEFAULT_SORTING\}/$apply_default_sorting}"
+    service_template="${service_template//\$\{SEARCH_FILTER_LOGIC\}/$search_filter_logic}"
+    
+    # Create temp file with replaced content
+    local temp_file=$(mktemp)
+    echo "$service_template" > "$temp_file"
+    
     process_template \
-        "${TEMPLATES_DIR}/application/app-service-crud.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Application/${MODULE_NAME}/${ENTITY_NAME}AppService.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "$temp_file" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application/${MODULE_NAME}/${ENTITY_NAME}AppService.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
         "ENTITY_NAME_LOWER=$entity_name_lower" \
-        "ENTITY_NAME_PLURAL=$entity_name_plural"
+        "ENTITY_NAME_PLURAL=$entity_name_plural" \
+        "ID_TYPE=$ENTITY_ID_TYPE"
+    
+    rm -f "$temp_file"
 }
 
 generate_controller_files() {
@@ -1331,8 +2376,8 @@ generate_controller_files() {
     
     process_template \
         "${TEMPLATES_DIR}/api/controller-crud.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.HttpApi/${MODULE_NAME}/Controllers/${ENTITY_NAME}Controller.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.HttpApi/${MODULE_NAME}/Controllers/${ENTITY_NAME}Controller.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "MODULE_NAME_LOWER=$module_name_lower" \
         "ENTITY_NAME=$ENTITY_NAME" \
@@ -1349,8 +2394,8 @@ generate_seeder_files() {
     
     process_template \
         "${TEMPLATES_DIR}/infrastructure/seeder.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}/${ENTITY_NAME}DataSeeder.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}/${ENTITY_NAME}DataSeeder.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
         "ENTITY_NAME_LOWER=$entity_name_lower" \
@@ -1363,8 +2408,8 @@ generate_validation_files() {
     
     process_template \
         "${TEMPLATES_DIR}/application/validator.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Application/${MODULE_NAME}/Validators/${ENTITY_NAME}Validator.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application/${MODULE_NAME}/Validators/${ENTITY_NAME}Validator.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
         "VALIDATION_RULES="
@@ -1379,8 +2424,8 @@ generate_test_files() {
     # Service tests
     process_template \
         "${TEMPLATES_DIR}/tests/unit-test-service.template.cs" \
-        "${PROJECT_ROOT}/test/${NAMESPACE}.Application.Tests/${MODULE_NAME}/${ENTITY_NAME}AppServiceTests.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "${PROJECT_ROOT}/test/${BASE_NAMESPACE}.Application.Tests/${MODULE_NAME}/${ENTITY_NAME}AppServiceTests.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
         "ENTITY_NAME_LOWER=$entity_name_lower" \
@@ -1389,8 +2434,8 @@ generate_test_files() {
     # Domain tests
     process_template \
         "${TEMPLATES_DIR}/tests/unit-test-domain.template.cs" \
-        "${PROJECT_ROOT}/test/${NAMESPACE}.Domain.Tests/${MODULE_NAME}/${ENTITY_NAME}DomainTests.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "${PROJECT_ROOT}/test/${BASE_NAMESPACE}.Domain.Tests/${MODULE_NAME}/${ENTITY_NAME}DomainTests.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
         "ENTITY_NAME_LOWER=$entity_name_lower" \
@@ -1427,8 +2472,8 @@ generate_constants_file() {
     
     process_template \
         "${TEMPLATES_DIR}/shared/entity-consts.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/Constants/${ENTITY_NAME}Constants.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}/Constants/${ENTITY_NAME}Constants.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
         "VALIDATION_CONSTANTS=$validation_constants"
@@ -1437,7 +2482,7 @@ generate_constants_file() {
 generate_permissions_file() {
     log_step "Generating permissions file..."
     
-    local output_file="${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/Permissions/${MODULE_NAME}Permissions.cs"
+    local output_file="${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/Permissions/${MODULE_NAME}Permissions.cs"
     
     if [ -f "$output_file" ]; then
         log_info "Permissions file already exists, updating..."
@@ -1446,7 +2491,7 @@ generate_permissions_file() {
         process_template \
             "${TEMPLATES_DIR}/permissions/permissions.template.cs" \
             "$output_file" \
-            "NAMESPACE=$NAMESPACE" \
+            "NAMESPACE=${BASE_NAMESPACE}" \
             "MODULE_NAME=$MODULE_NAME" \
             "ENTITY_NAME=$ENTITY_NAME" \
             "ADDITIONAL_PERMISSION_CLASSES="
@@ -1455,7 +2500,7 @@ generate_permissions_file() {
     # Generate permission definition provider
     local module_name_lower="$(echo ${MODULE_NAME:0:1} | tr '[:upper:]' '[:lower:]')${MODULE_NAME:1}"
     local entity_name_lower="$(echo ${ENTITY_NAME:0:1} | tr '[:upper:]' '[:lower:]')${ENTITY_NAME:1}"
-    local output_file2="${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/Permissions/${MODULE_NAME}PermissionDefinitionProvider.cs"
+    local output_file2="${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application.Contracts/${MODULE_NAME}/Permissions/${MODULE_NAME}PermissionDefinitionProvider.cs"
     
     if [ -f "$output_file2" ]; then
         log_info "Permission definition provider already exists, updating..."
@@ -1464,7 +2509,7 @@ generate_permissions_file() {
         process_template \
             "${TEMPLATES_DIR}/permissions/permission-definition-provider.template.cs" \
             "$output_file2" \
-            "NAMESPACE=$NAMESPACE" \
+            "NAMESPACE=${BASE_NAMESPACE}" \
             "MODULE_NAME=$MODULE_NAME" \
             "MODULE_NAME_LOWER=$module_name_lower" \
             "ENTITY_NAME=$ENTITY_NAME" \
@@ -1474,24 +2519,43 @@ generate_permissions_file() {
 }
 
 generate_event_files() {
+    local properties=$1
+    
     log_step "Generating event files..."
     
-    # Generate ETO
+    # Generate foreign key name properties
+    local foreign_key_names=$(get_foreign_key_names "$properties")
+    
+    # Generate ETO - need to handle FOREIGN_KEY_NAMES placeholder
+    local template_file="${TEMPLATES_DIR}/events/eto.template.cs"
+    local output_file="${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}/Events/${ENTITY_NAME}Eto.cs"
+    
+    # Load template and replace FOREIGN_KEY_NAMES manually
+    local template_content=$(cat "$template_file")
+    template_content="${template_content//\$\{FOREIGN_KEY_NAMES\}/$foreign_key_names}"
+    
+    # Create temp file with replaced content
+    local temp_file=$(mktemp)
+    echo -e "$template_content" > "$temp_file"
+    
+    # Now process with standard template processing
     process_template \
-        "${TEMPLATES_DIR}/events/eto.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/Events/${ENTITY_NAME}Eto.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "$temp_file" \
+        "$output_file" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME" \
         "ID_TYPE=$ENTITY_ID_TYPE" \
-        "PROPERTIES=" \
-        "FOREIGN_KEY_NAMES="
+        "PROPERTIES="
+    
+    # Clean up temp file
+    rm -f "$temp_file"
     
     # Generate event types
     process_template \
         "${TEMPLATES_DIR}/events/event-types.template.cs" \
-        "${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/Events/${ENTITY_NAME}EtoTypes.cs" \
-        "NAMESPACE=$NAMESPACE" \
+        "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}/Events/${ENTITY_NAME}EtoTypes.cs" \
+        "NAMESPACE=${BASE_NAMESPACE}" \
         "MODULE_NAME=$MODULE_NAME" \
         "ENTITY_NAME=$ENTITY_NAME"
 }
@@ -1500,7 +2564,7 @@ generate_localization_entries() {
     log_step "Generating localization entries..."
     
     # English localization
-    local localization_dir="${PROJECT_ROOT}/src/${NAMESPACE}.Domain/Localization/${MODULE_NAME}"
+    local localization_dir="${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/Localization/${MODULE_NAME}"
     local en_file="${localization_dir}/en.json"
     
     if [ -f "$en_file" ] && command -v jq &> /dev/null; then
@@ -1960,11 +3024,11 @@ add_new_module() {
     # Create module structure
     log_step "Creating module directory structure..."
     
-    create_directory_if_not_exists "${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}"
-    create_directory_if_not_exists "${PROJECT_ROOT}/src/${NAMESPACE}.Application/${MODULE_NAME}"
-    create_directory_if_not_exists "${PROJECT_ROOT}/src/${NAMESPACE}.Application/DTOs"
-    create_directory_if_not_exists "${PROJECT_ROOT}/src/${NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}"
-    create_directory_if_not_exists "${PROJECT_ROOT}/src/${NAMESPACE}.HttpApi/Controllers"
+    create_directory_if_not_exists "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Domain/${MODULE_NAME}"
+    create_directory_if_not_exists "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application/${MODULE_NAME}"
+    create_directory_if_not_exists "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.Application/DTOs"
+    create_directory_if_not_exists "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.EntityFrameworkCore/${MODULE_NAME}"
+    create_directory_if_not_exists "${PROJECT_ROOT}/src/${BASE_NAMESPACE}.HttpApi/Controllers"
     
     log_success "Module '$MODULE_NAME' structure created successfully!"
     log_info "You can now add entities to this module using option 3"

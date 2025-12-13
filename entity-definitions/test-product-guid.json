@@ -1,7 +1,7 @@
 {
   "entity": {
     "name": "Product",
-    "namespace": "TestApp",
+    "namespace": "EdeServices",
     "moduleName": "Catalog",
     "idType": "Guid",
     "baseClass": "FullAuditedAggregateRoot<Guid>"

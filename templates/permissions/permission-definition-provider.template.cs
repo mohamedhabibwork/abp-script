@@ -1,6 +1,7 @@
-using ${NAMESPACE}.${MODULE_NAME}.Localization;
+using ${NAMESPACE}.Domain.${MODULE_NAME}.Localization;
 using Volo.Abp.Authorization.Permissions;
 using Volo.Abp.Localization;
+using ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.Permissions;
 
 namespace ${NAMESPACE}.${MODULE_NAME}.Permissions
 {

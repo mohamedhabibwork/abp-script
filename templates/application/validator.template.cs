@@ -1,5 +1,6 @@
 using FluentValidation;
 using ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.DTOs;
+using ${NAMESPACE}.Domain.${MODULE_NAME}.Constants;
 
 namespace ${NAMESPACE}.Application.${MODULE_NAME}.Validators
 {
@@ -17,13 +18,13 @@ namespace ${NAMESPACE}.Application.${MODULE_NAME}.Validators
             RuleFor(x => x.Name)
                 .NotEmpty()
                 .WithMessage("Name is required.")
-                .Length(${ENTITY_NAME}Consts.MinNameLength, ${ENTITY_NAME}Consts.MaxNameLength)
+                .Length(${ENTITY_NAME}Constants.ValidationConstants.MinNameLength, ${ENTITY_NAME}Constants.ValidationConstants.MaxNameLength)
                 .WithMessage($"Name must be between {${ENTITY_NAME}Consts.MinNameLength} and {${ENTITY_NAME}Consts.MaxNameLength} characters.")
                 .Matches("^[a-zA-Z0-9\\s-_]+$")
                 .WithMessage("Name can only contain letters, numbers, spaces, hyphens, and underscores.");
 
             RuleFor(x => x.Description)
-                .MaximumLength(${ENTITY_NAME}Consts.MaxDescriptionLength)
+                .MaximumLength(${ENTITY_NAME}Constants.ValidationConstants.MaxDescriptionLength)
                 .WithMessage($"Description cannot exceed {${ENTITY_NAME}Consts.MaxDescriptionLength} characters.")
                 .When(x => !string.IsNullOrEmpty(x.Description));
 
@@ -45,13 +46,13 @@ namespace ${NAMESPACE}.Application.${MODULE_NAME}.Validators
             RuleFor(x => x.Name)
                 .NotEmpty()
                 .WithMessage("Name is required.")
-                .Length(${ENTITY_NAME}Consts.MinNameLength, ${ENTITY_NAME}Consts.MaxNameLength)
+                .Length(${ENTITY_NAME}Constants.ValidationConstants.MinNameLength, ${ENTITY_NAME}Constants.ValidationConstants.MaxNameLength)
                 .WithMessage($"Name must be between {${ENTITY_NAME}Consts.MinNameLength} and {${ENTITY_NAME}Consts.MaxNameLength} characters.")
                 .Matches("^[a-zA-Z0-9\\s-_]+$")
                 .WithMessage("Name can only contain letters, numbers, spaces, hyphens, and underscores.");
 
             RuleFor(x => x.Description)
-                .MaximumLength(${ENTITY_NAME}Consts.MaxDescriptionLength)
+                .MaximumLength(${ENTITY_NAME}Constants.ValidationConstants.MaxDescriptionLength)
                 .WithMessage($"Description cannot exceed {${ENTITY_NAME}Consts.MaxDescriptionLength} characters.")
                 .When(x => !string.IsNullOrEmpty(x.Description));
 

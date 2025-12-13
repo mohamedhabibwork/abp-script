@@ -501,6 +501,59 @@ function Read-JsonEntity {
     try {
         $json = Get-Content $JsonFile -Raw | ConvertFrom-Json
         
+        # Support both old and new JSON structure
+        if ($json.entity -is [PSCustomObject]) {
+            # New structure: entity is an object
+            if (-not $json.entity.name -or -not $json.entity.moduleName) {
+                Write-Error-Custom "JSON entity object must contain 'name' and 'moduleName' fields"
+                return $null
+            }
+            
+            $script:EntityName = $json.entity.name
+            $script:ModuleName = $json.entity.moduleName
+            
+            # Try to get namespace from JSON, then auto-detect, then ask
+            if ($json.entity.namespace) {
+                $script:Namespace = $json.entity.namespace
+            } elseif ($json.namespace) {
+                $script:Namespace = $json.namespace
+            } else {
+                # Try to auto-detect from project
+                if ([string]::IsNullOrWhiteSpace($script:Namespace)) {
+                    Find-ProjectInfo | Out-Null
+                }
+                
+                # If still not found, try to load from config
+                if ([string]::IsNullOrWhiteSpace($script:Namespace)) {
+                    Load-Config
+                }
+                
+                # If still not found, ask user
+                if ([string]::IsNullOrWhiteSpace($script:Namespace)) {
+                    Write-Host ""
+                    $script:Namespace = Read-Host "Enter namespace (e.g., MyCompany.MyProject)"
+                    if ([string]::IsNullOrWhiteSpace($script:Namespace)) {
+                        Write-Error-Custom "Namespace is required"
+                        return $null
+                    }
+                }
+            }
+            
+            # Parse base class if provided
+            if ($json.entity.baseClass) {
+                $script:EntityBaseClass = $json.entity.baseClass
+            } else {
+                $script:EntityBaseClass = "FullAuditedAggregateRoot<Guid>"
+            }
+            
+            # Parse ID type if provided
+            if ($json.entity.idType) {
+                $script:EntityIdType = $json.entity.idType
+            } else {
+                $script:EntityIdType = "Guid"
+            }
+        } elseif ($json.entity -is [string]) {
+            # Old structure: entity and module are strings
         if (-not $json.entity -or -not $json.module) {
             Write-Error-Custom "JSON must contain 'entity' and 'module' fields"
             return $null
@@ -508,6 +561,31 @@ function Read-JsonEntity {
         
         $script:EntityName = $json.entity
         $script:ModuleName = $json.module
+            
+            # Try to get namespace from JSON, then auto-detect, then ask
+            if ($json.namespace) {
+                $script:Namespace = $json.namespace
+            } else {
+                # Try to auto-detect from project
+                if ([string]::IsNullOrWhiteSpace($script:Namespace)) {
+                    Find-ProjectInfo | Out-Null
+                }
+                
+                # If still not found, try to load from config
+                if ([string]::IsNullOrWhiteSpace($script:Namespace)) {
+                    Load-Config
+                }
+                
+                # If still not found, ask user
+                if ([string]::IsNullOrWhiteSpace($script:Namespace)) {
+                    Write-Host ""
+                    $script:Namespace = Read-Host "Enter namespace (e.g., MyCompany.MyProject)"
+                    if ([string]::IsNullOrWhiteSpace($script:Namespace)) {
+                        Write-Error-Custom "Namespace is required"
+                        return $null
+                    }
+                }
+            }
         
         # Parse base class if provided
         if ($json.baseClass) {
@@ -521,21 +599,34 @@ function Read-JsonEntity {
             $script:EntityIdType = $json.idType
         } else {
             $script:EntityIdType = "Guid"
+            }
+        } else {
+            Write-Error-Custom "JSON must contain 'entity' field (object with 'name' and 'moduleName', or string with separate 'module' field)"
+            return $null
         }
         
         # Parse DbContext name if provided
         if ($json.dbContext) {
             $script:DbContextName = $json.dbContext
+        } elseif ($json.entity.dbContextName) {
+            $script:DbContextName = $json.entity.dbContextName
         } else {
             $script:DbContextName = "$($script:ModuleName)DbContext"
         }
         
-        # Update base class with ID type if it contains <Guid>
+        # Update base class with ID type if it contains <Guid> or doesn't have generic type
         if ($script:EntityBaseClass -match "<Guid>") {
             $script:EntityBaseClass = $script:EntityBaseClass -replace "<Guid>", "<$($script:EntityIdType)>"
+        } elseif ($script:EntityBaseClass -notmatch "<") {
+            # If base class doesn't have generic type, add it
+            $script:EntityBaseClass = "$($script:EntityBaseClass)<$($script:EntityIdType)>"
         }
         
-        Write-Success "Parsed entity: $script:EntityName in module: $script:ModuleName (Base: $script:EntityBaseClass, ID: $script:EntityIdType)"
+        # Store base namespace (e.g., "MyCompany.MyProject")
+        # Templates will use: {BaseNamespace}.Application.{ModuleName}, {BaseNamespace}.Domain.{ModuleName}, etc.
+        $script:BaseNamespace = $script:Namespace
+        
+        Write-Success "Parsed entity: $script:EntityName in module: $script:ModuleName (Namespace: $script:BaseNamespace, Base: $script:EntityBaseClass, ID: $script:EntityIdType)"
         return $json
     } catch {
         Write-Error-Custom "Failed to parse JSON: $_"
@@ -566,13 +657,13 @@ function New-PropertyDeclaration {
     
     $declaration = ""
     
-    # Add validation attributes
+    # Add validation attributes - each on its own line
     if ($Property.required -eq $true) {
-        $declaration += "[Required]`n    "
+        $declaration += "        [Required]`n"
     }
     
     if ($Property.maxLength) {
-        $declaration += "[StringLength($($Property.maxLength))]`n    "
+        $declaration += "        [StringLength($($Property.maxLength))]`n"
     }
     
     # Determine if property should be nullable
@@ -593,7 +684,7 @@ function New-PropertyDeclaration {
     }
     
     # Add property
-    $declaration += "public $finalType $($Property.name) { get; set; }"
+    $declaration += "        public $finalType $($Property.name) { get; set; }"
     
     return $declaration
 }
@@ -745,10 +836,12 @@ function Invoke-TemplateProcessing {
     
     $content = Get-Content $TemplateFile -Raw
     
-    # Replace variables
+    # Replace variables - escape the placeholder pattern, not the value
     foreach ($key in $Variables.Keys) {
         $value = $Variables[$key]
-        $content = $content -replace [regex]::Escape("`${$key}"), $value
+        # Escape the placeholder pattern ${KEY} but not the replacement value
+        $placeholder = [regex]::Escape("`${$key}")
+        $content = $content -replace $placeholder, $value
     }
     
     # Create output directory
@@ -793,6 +886,694 @@ function Get-IdDefaultValue {
     }
 }
 
+function Get-RepositoryMethods {
+    param(
+        [array]$Properties,
+        [string]$EntityName,
+        [string]$IdType
+    )
+    
+    $methods = @"
+        /// <summary>
+        /// Finds a ${EntityName} by name.
+        /// </summary>
+        /// <param name="name">The name to search for.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The ${EntityName} if found; otherwise, null.</returns>
+        public virtual async Task<${EntityName}?> FindByNameAsync(
+            string name,
+            CancellationToken cancellationToken = default)
+        {
+            var dbSet = await GetDbSetAsync();
+            return await dbSet
+                .Where(x => x.Name == name)
+                .FirstOrDefaultAsync(GetCancellationToken(cancellationToken));
+        }
+
+        /// <summary>
+        /// Gets a list of ${EntityName} entities by filter.
+        /// </summary>
+        /// <param name="skipCount">Number of items to skip.</param>
+        /// <param name="maxResultCount">Maximum number of items to return.</param>
+        /// <param name="sorting">Sorting expression.</param>
+        /// <param name="filter">Filter text.</param>
+        /// <param name="isActive">Filter by active status.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>List of ${EntityName} entities.</returns>
+        public virtual async Task<List<${EntityName}>> GetListAsync(
+            int skipCount = 0,
+            int maxResultCount = 10,
+            string? sorting = null,
+            string? filter = null,
+            bool? isActive = null,
+            CancellationToken cancellationToken = default)
+        {
+            var dbSet = await GetDbSetAsync();
+            
+            return await dbSet
+                .WhereIf(
+                    !string.IsNullOrWhiteSpace(filter),
+                    x => x.Name.Contains(filter!) || 
+                         (x.Description != null && x.Description.Contains(filter!))
+                )
+                .WhereIf(isActive.HasValue, x => x.IsActive == isActive!.Value)
+                .OrderBy(sorting ?? nameof(${EntityName}.Name))
+                .Skip(skipCount)
+                .Take(maxResultCount)
+                .ToListAsync(GetCancellationToken(cancellationToken));
+        }
+
+        /// <summary>
+        /// Gets the count of ${EntityName} entities by filter.
+        /// </summary>
+        /// <param name="filter">Filter text.</param>
+        /// <param name="isActive">Filter by active status.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>Count of ${EntityName} entities.</returns>
+        public virtual async Task<long> GetCountAsync(
+            string? filter = null,
+            bool? isActive = null,
+            CancellationToken cancellationToken = default)
+        {
+            var dbSet = await GetDbSetAsync();
+            
+            return await dbSet
+                .WhereIf(
+                    !string.IsNullOrWhiteSpace(filter),
+                    x => x.Name.Contains(filter!) || 
+                         (x.Description != null && x.Description.Contains(filter!))
+                )
+                .WhereIf(isActive.HasValue, x => x.IsActive == isActive!.Value)
+                .LongCountAsync(GetCancellationToken(cancellationToken));
+        }
+
+        /// <summary>
+        /// Gets all active ${EntityName} entities.
+        /// </summary>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>List of active ${EntityName} entities.</returns>
+        public virtual async Task<List<${EntityName}>> GetActiveListAsync(
+            CancellationToken cancellationToken = default)
+        {
+            var dbSet = await GetDbSetAsync();
+            
+            return await dbSet
+                .Where(x => x.IsActive)
+                .OrderBy(x => x.Name)
+                .ToListAsync(GetCancellationToken(cancellationToken));
+        }
+
+        /// <summary>
+        /// Checks if a ${EntityName} with the given name exists.
+        /// </summary>
+        /// <param name="name">The name to check.</param>
+        /// <param name="excludeId">ID to exclude from the check (for updates).</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>True if exists; otherwise, false.</returns>
+        public virtual async Task<bool> ExistsByNameAsync(
+            string name,
+            ${IdType}? excludeId = null,
+            CancellationToken cancellationToken = default)
+        {
+            var dbSet = await GetDbSetAsync();
+            
+            return await dbSet
+                .Where(x => x.Name == name)
+                .WhereIf(excludeId.HasValue, x => x.Id != excludeId!.Value)
+                .AnyAsync(GetCancellationToken(cancellationToken));
+        }
+"@
+    
+    return $methods
+}
+
+function Get-PublishCreateEvent {
+    param(
+        [string]$EntityName,
+        [string]$BaseClass
+    )
+    
+    # Only publish events for AggregateRoot (not for Entity<Guid>)
+    if ($BaseClass -match "AggregateRoot" -and $BaseClass -notmatch "Entity<Guid>") {
+        return @"
+            var eto = ObjectMapper.Map<${EntityName}, ${EntityName}Eto>(entity);
+            eto.CreationTime = DateTime.UtcNow;
+            entity.PublishDistributedEvent(eto);
+"@
+    }
+    return ""
+}
+
+function Get-PublishUpdateEvent {
+    param(
+        [string]$EntityName,
+        [string]$BaseClass
+    )
+    
+    # Only publish events for AggregateRoot (not for Entity<Guid>)
+    if ($BaseClass -match "AggregateRoot" -and $BaseClass -notmatch "Entity<Guid>") {
+        return @"
+            var eto = ObjectMapper.Map<${EntityName}, ${EntityName}Eto>(entity);
+            eto.LastModificationTime = DateTime.UtcNow;
+            entity.PublishDistributedEvent(eto);
+"@
+    }
+    return ""
+}
+
+function Get-ApplyDefaultSorting {
+    param(
+        [string]$IdType,
+        [string]$EntityName
+    )
+    
+    # Only for non-Guid IDs (long, int)
+    if ($IdType -ne "Guid") {
+        return @"
+        protected override IQueryable<$EntityName> ApplyDefaultSorting(IQueryable<$EntityName> query)
+        {
+            return query.OrderByDescending(x => x.CreationTime);
+        }
+
+"@
+    }
+    return ""
+}
+
+function Get-SearchFilterLogic {
+    param(
+        [array]$Properties
+    )
+    
+    # Find string properties for search
+    $stringProperties = @()
+    foreach ($prop in $Properties) {
+        if ($prop.type -eq "string" -and $prop.name -ne "Id" -and -not $prop.isForeignKey) {
+            $stringProperties += $prop.name
+        }
+    }
+    
+    if ($stringProperties.Count -eq 0) {
+        return "            // Add custom search filter logic here"
+    }
+    
+    $searchConditions = ""
+    foreach ($propName in $stringProperties) {
+        if ($searchConditions) {
+            $searchConditions += " || "
+        }
+        $searchConditions += "x.$propName != null && x.$propName.ToLower().Contains(searchTerm)"
+    }
+    
+    return @"
+            if (!input.Search.IsNullOrEmpty())
+            {
+                string searchTerm = input.Search.ToLower();
+                data = data.Where(x => $searchConditions);
+            }
+"@
+}
+
+function Get-FilterProperties {
+    param(
+        [array]$Properties,
+        [string]$IdType
+    )
+    
+    $filterProps = ""
+    
+    foreach ($prop in $Properties) {
+        # Skip Id, Name, Description, and IsActive (already handled)
+        if ($prop.name -in @("Id", "Name", "Description", "IsActive")) {
+            continue
+        }
+        
+        # Include foreign key properties for filtering by related entities
+        if ($prop.isForeignKey -eq $true) {
+            $propName = $prop.name
+            $filterProps += @"
+        /// <summary>
+        /// Gets or sets the filter for $propName.
+        /// </summary>
+        public $IdType? $propName { get; set; }
+
+"@
+        }
+        # Include boolean properties (except IsActive which is already there)
+        elseif ($prop.type -eq "bool") {
+            $propName = $prop.name
+            $filterProps += @"
+        /// <summary>
+        /// Gets or sets a value to filter by $propName.
+        /// </summary>
+        public bool? $propName { get; set; }
+
+"@
+        }
+        # Include enum properties
+        elseif ($prop.type -match "Enum|enum") {
+            $propName = $prop.name
+            $filterProps += @"
+        /// <summary>
+        /// Gets or sets the filter for $propName.
+        /// </summary>
+        public $($prop.type)? $propName { get; set; }
+
+"@
+        }
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($filterProps)) {
+        return "        // Add additional filter properties here"
+    }
+    
+    return $filterProps.TrimEnd()
+}
+
+function Get-ForeignKeyNames {
+    param([array]$Properties)
+    
+    $fkProps = ""
+    
+    foreach ($prop in $Properties) {
+        if ($prop.isForeignKey -eq $true) {
+            $propName = $prop.name
+            $type = $prop.type
+            $required = $prop.required
+            
+            # Determine if nullable
+            $nullableType = $type
+            if ($required -ne $true) {
+                if ($type -eq "string") {
+                    $nullableType = "string?"
+                } elseif (@("int", "long", "decimal", "double", "float", "bool", "DateTime", "Guid") -contains $type) {
+                    $nullableType = "$type?"
+                }
+            }
+            
+            # Generate property name from foreign key name (e.g., CustomerId -> Customer)
+            $displayName = $propName
+            if ($propName.EndsWith("Id")) {
+                $displayName = $propName.Substring(0, $propName.Length - 2)
+            }
+            
+            $fkProps += @"
+        /// <summary>
+        /// Gets or sets the $displayName ID.
+        /// </summary>
+        public $nullableType $propName { get; set; }
+
+"@
+        }
+    }
+    
+    return $fkProps.TrimEnd()
+}
+
+function Get-ConstructorParams {
+    param([array]$Properties)
+    
+    $params = ""
+    foreach ($prop in $Properties) {
+        if (-not $prop.isForeignKey) {
+            $propNameLower = $prop.name.Substring(0,1).ToLower() + $prop.name.Substring(1)
+            $type = $prop.type
+            if ($prop.nullable -eq $true -or $prop.required -ne $true) {
+                if ($type -eq "string") {
+                    $type = "string?"
+                } elseif (@("int", "long", "decimal", "double", "float", "bool", "DateTime", "Guid") -contains $type) {
+                    $type = "$type?"
+                }
+            }
+            $params += "`n        /// <param name=`"$propNameLower`">The $($prop.name).</param>"
+        }
+    }
+    return $params
+}
+
+function Get-ConstructorSignature {
+    param([array]$Properties)
+    
+    $signature = ""
+    foreach ($prop in $Properties) {
+        if (-not $prop.isForeignKey) {
+            $propNameLower = $prop.name.Substring(0,1).ToLower() + $prop.name.Substring(1)
+            $type = $prop.type
+            if ($prop.nullable -eq $true -or $prop.required -ne $true) {
+                if ($type -eq "string") {
+                    $type = "string?"
+                } elseif (@("int", "long", "decimal", "double", "float", "bool", "DateTime", "Guid") -contains $type) {
+                    $type = "$type?"
+                }
+            }
+            if ($signature) {
+                $signature += ", "
+            }
+            $signature += "$type $propNameLower"
+        }
+    }
+    if ($signature) {
+        $signature = ", $signature"
+    }
+    return $signature
+}
+
+function Get-PropertySetters {
+    param([array]$Properties)
+    
+    $setters = ""
+    foreach ($prop in $Properties) {
+        if (-not $prop.isForeignKey) {
+            $propNameLower = $prop.name.Substring(0,1).ToLower() + $prop.name.Substring(1)
+            $setters += "Set$($prop.name)($propNameLower);`n            "
+        }
+    }
+    return $setters.TrimEnd()
+}
+
+function Get-SetterMethods {
+    param([array]$Properties, [string]$EntityName)
+    
+    $methods = ""
+    foreach ($prop in $Properties) {
+        if (-not $prop.isForeignKey) {
+            $propNameLower = $prop.name.Substring(0,1).ToLower() + $prop.name.Substring(1)
+            $type = $prop.type
+            if ($prop.nullable -eq $true -or $prop.required -ne $true) {
+                if ($type -eq "string") {
+                    $type = "string?"
+                } elseif (@("int", "long", "decimal", "double", "float", "bool", "DateTime", "Guid") -contains $type) {
+                    $type = "$type?"
+                }
+            }
+            
+            $validation = ""
+            if ($prop.type -eq "string" -and $prop.required -eq $true) {
+                $maxLength = if ($prop.maxLength) { $prop.maxLength } else { "128" }
+                $validation = "Check.NotNullOrWhiteSpace($propNameLower, nameof($propNameLower), ${EntityName}Constants.ValidationConstants.$($prop.name)MaxLength);"
+            } else {
+                $validation = "$propNameLower"
+            }
+            
+            $methods += @"
+        /// <summary>
+        /// Sets the $($prop.name).
+        /// </summary>
+        /// <param name="$propNameLower">The $($prop.name) to set.</param>
+        public $EntityName Set$($prop.name)($type $propNameLower)
+        {
+            $($prop.name) = $validation;
+            return this;
+        }
+
+"@
+        }
+    }
+    return $methods.TrimEnd()
+}
+
+function Get-PublishEventMethod {
+    param(
+        [string]$BaseClass,
+        [string]$EntityName
+    )
+    
+    # Only for AggregateRoot (not Entity<Guid> or ValueObject)
+    if ($BaseClass -match "AggregateRoot" -and $BaseClass -notmatch "Entity<Guid>") {
+        return @"
+        /// <summary>
+        /// Publishes a distributed event.
+        /// </summary>
+        /// <param name="eto">The event transfer object.</param>
+        public void PublishDistributedEvent(${EntityName}Eto eto)
+        {
+            AddDistributedEvent(eto);
+        }
+
+"@
+    }
+    return ""
+}
+
+function Get-ValueObjectMethods {
+    param([string]$BaseClass, [array]$Properties)
+    
+    # Only for ValueObject
+    if ($BaseClass -match "ValueObject") {
+        $yields = ""
+        foreach ($prop in $Properties) {
+            $yields += "            yield return $($prop.name);`n"
+        }
+        return @"
+        protected override IEnumerable<object> GetAtomicValues()
+        {
+$yields        }
+
+"@
+    }
+    return ""
+}
+
+function Get-UpdateMethodParams {
+    param([array]$Properties)
+    
+    $params = ""
+    foreach ($prop in $Properties) {
+        if (-not $prop.isForeignKey) {
+            $propNameLower = $prop.name.Substring(0,1).ToLower() + $prop.name.Substring(1)
+            $type = $prop.type
+            if ($prop.nullable -eq $true -or $prop.required -ne $true) {
+                if ($type -eq "string") {
+                    $type = "string?"
+                } elseif (@("int", "long", "decimal", "double", "float", "bool", "DateTime", "Guid") -contains $type) {
+                    $type = "$type?"
+                }
+            }
+            $params += "`n        /// <param name=`"$propNameLower`">The $($prop.name).</param>"
+        }
+    }
+    return $params
+}
+
+function Get-UpdateMethodSignature {
+    param([array]$Properties)
+    
+    $signature = ""
+    foreach ($prop in $Properties) {
+        if (-not $prop.isForeignKey) {
+            $propNameLower = $prop.name.Substring(0,1).ToLower() + $prop.name.Substring(1)
+            $type = $prop.type
+            if ($prop.nullable -eq $true -or $prop.required -ne $true) {
+                if ($type -eq "string") {
+                    $type = "string?"
+                } elseif (@("int", "long", "decimal", "double", "float", "bool", "DateTime", "Guid") -contains $type) {
+                    $type = "$type?"
+                }
+            }
+            if ($signature) {
+                $signature += ", "
+            }
+            $signature += "$type $propNameLower"
+        }
+    }
+    return $signature
+}
+
+function Get-UpdateSetters {
+    param([array]$Properties)
+    
+    $setters = ""
+    foreach ($prop in $Properties) {
+        if (-not $prop.isForeignKey) {
+            $propNameLower = $prop.name.Substring(0,1).ToLower() + $prop.name.Substring(1)
+            $setters += "Set$($prop.name)($propNameLower);`n            "
+        }
+    }
+    return $setters.TrimEnd()
+}
+
+function Get-ManagerCreateMethod {
+    param(
+        [array]$Properties,
+        [string]$EntityName,
+        [string]$IdType,
+        [string]$ModuleName
+    )
+    
+    $entityNameLower = $EntityName.Substring(0,1).ToLower() + $EntityName.Substring(1)
+    
+    # Find Name property
+    $nameProp = $Properties | Where-Object { $_.name -eq "Name" }
+    $hasName = $null -ne $nameProp
+    
+    # Build constructor parameters - Name first, then others
+    $methodParams = ""
+    $paramDocs = ""
+    $setterCalls = ""
+    
+    # First, add Name parameter if it exists
+    if ($hasName) {
+        $methodParams = "string name"
+        $paramDocs = "        /// <param name=`"name`">The name of the ${EntityName}.</param>`n"
+    }
+    
+    # Then add other properties
+    foreach ($prop in $Properties) {
+        if (-not $prop.isForeignKey -and $prop.name -ne "Id" -and $prop.name -ne "Name") {
+            $propNameLower = $prop.name.Substring(0,1).ToLower() + $prop.name.Substring(1)
+            $type = $prop.type
+            if ($prop.nullable -eq $true -or $prop.required -ne $true) {
+                if ($type -eq "string") {
+                    $type = "string?"
+                } elseif (@("int", "long", "decimal", "double", "float", "bool", "DateTime", "Guid") -contains $type) {
+                    $type = "$type?"
+                }
+            }
+            
+            if ($methodParams) {
+                $methodParams += ", "
+            }
+            $methodParams += "$type $propNameLower = null"
+            $paramDocs += "        /// <param name=`"$propNameLower`">The $($prop.name).</param>`n"
+            
+            if ($setterCalls) {
+                $setterCalls += "`n            "
+            }
+            $setterCalls += "if ($propNameLower != null)`n            {`n                entity.Set$($prop.name)($propNameLower);`n            }"
+        }
+    }
+    
+    # Generate ID creation based on type
+    $idCreation = ""
+    switch ($IdType) {
+        "Guid" { $idCreation = "GuidGenerator.Create()" }
+        "long" { $idCreation = "0" }
+        "int" { $idCreation = "0" }
+        default { $idCreation = "GuidGenerator.Create()" }
+    }
+    
+    $method = @"
+        /// <summary>
+        /// Creates a new ${EntityName} with validation.
+        /// </summary>
+$paramDocs        /// <returns>The created ${EntityName}.</returns>
+        /// <exception cref="BusinessException">Thrown when a ${EntityName} with the same name already exists.</exception>
+        public async Task<${EntityName}> CreateAsync($methodParams)
+        {
+"@
+    
+    if ($hasName) {
+        $method += @"
+            Check.NotNullOrWhiteSpace(name, nameof(name));
+
+            // Check for duplicate name
+            var existingEntity = await _${entityNameLower}Repository.FindByNameAsync(name);
+            if (existingEntity != null)
+            {
+                throw new BusinessException(${ModuleName}DomainErrorCodes.${EntityName}AlreadyExists)
+                    .WithData("name", name);
+            }
+
+"@
+    }
+    
+    $method += @"
+            var entity = new ${EntityName}(
+                $idCreation"@
+    
+    if ($hasName) {
+        $method += ",`n                name"
+    }
+    
+    $method += @"
+            );
+
+$setterCalls
+
+            return entity;
+        }
+
+"@
+    
+    return $method
+}
+
+function Get-ManagerUpdateNameMethod {
+    param(
+        [array]$Properties,
+        [string]$EntityName,
+        [string]$ModuleName
+    )
+    
+    $entityNameLower = $EntityName.Substring(0,1).ToLower() + $EntityName.Substring(1)
+    
+    # Check if Name property exists
+    $nameProp = $Properties | Where-Object { $_.name -eq "Name" }
+    if ($null -eq $nameProp) {
+        return ""
+    }
+    
+    return @"
+        /// <summary>
+        /// Updates the name of a ${EntityName} with validation.
+        /// </summary>
+        /// <param name="entity">The ${EntityName} to update.</param>
+        /// <param name="newName">The new name.</param>
+        /// <exception cref="BusinessException">Thrown when a ${EntityName} with the same name already exists.</exception>
+        public async Task UpdateNameAsync(${EntityName} entity, string newName)
+        {
+            Check.NotNull(entity, nameof(entity));
+            Check.NotNullOrWhiteSpace(newName, nameof(newName));
+
+            if (entity.Name == newName)
+            {
+                return;
+            }
+
+            var existingEntity = await _${entityNameLower}Repository.FindByNameAsync(newName);
+            if (existingEntity != null && existingEntity.Id != entity.Id)
+            {
+                throw new BusinessException(${ModuleName}DomainErrorCodes.${EntityName}AlreadyExists)
+                    .WithData("name", newName);
+            }
+
+            entity.SetName(newName);
+        }
+
+"@
+}
+
+function Get-ManagerValidateActivationMethod {
+    param(
+        [array]$Properties,
+        [string]$EntityName
+    )
+    
+    # Check if IsActive property exists
+    $isActiveProp = $Properties | Where-Object { $_.name -eq "IsActive" }
+    if ($null -eq $isActiveProp) {
+        return ""
+    }
+    
+    return @"
+        /// <summary>
+        /// Performs business validation before activating a ${EntityName}.
+        /// </summary>
+        /// <param name="entity">The ${EntityName} to activate.</param>
+        /// <exception cref="BusinessException">Thrown when validation fails.</exception>
+        public async Task ValidateActivationAsync(${EntityName} entity)
+        {
+            Check.NotNull(entity, nameof(entity));
+
+            // Add business rules for activation
+            // For example, check if all required fields are filled
+
+            await Task.CompletedTask;
+        }
+
+"@
+}
+
 function Invoke-TemplateWithProperties {
     param(
         [string]$TemplateFile,
@@ -831,10 +1612,11 @@ function Invoke-TemplateWithProperties {
         $content = $content -replace [regex]::Escape('${ID_TYPE}'), $idType
     }
     
-    # Replace other variables
+    # Replace other variables - escape placeholder pattern, not the value
     foreach ($key in $Variables.Keys) {
         $value = $Variables[$key]
-        $content = $content -replace [regex]::Escape("`${$key}"), $value
+        $placeholder = [regex]::Escape("`${$key}")
+        $content = $content -replace $placeholder, $value
     }
     
     # Create output directory
@@ -871,11 +1653,12 @@ function New-EntityFromJson {
     # Generate all components
     New-ConstantsFile $properties
     New-PermissionsFile
-    New-EventFiles
+    New-EventFiles $properties
     New-EntityFiles $properties $relationships
     New-DtoFiles $properties
-    New-RepositoryFiles
-    New-ServiceFiles
+    New-RepositoryFiles $properties
+    New-ManagerFiles $properties
+    New-ServiceFiles $properties
     New-ControllerFiles
     New-LocalizationEntries
     
@@ -896,43 +1679,46 @@ function New-EntityFromJson {
     $generatedFiles = @()
     
     # Constants, permissions, and events
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\Constants\$($script:EntityName)Constants.cs"
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\Permissions\$($script:ModuleName)Permissions.cs"
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\Permissions\$($script:ModuleName)PermissionDefinitionProvider.cs"
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\Events\$($script:EntityName)Eto.cs"
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\Events\$($script:EntityName)EtoTypes.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\$script:ModuleName\Constants\$($script:EntityName)Constants.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\Permissions\$($script:ModuleName)Permissions.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\Permissions\$($script:ModuleName)PermissionDefinitionProvider.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\$script:ModuleName\Events\$($script:EntityName)Eto.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\$script:ModuleName\Events\$($script:EntityName)EtoTypes.cs"
     
     # Entity files
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\$script:EntityName.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\$script:ModuleName\$script:EntityName.cs"
     
     # DTO files
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\Create$($script:EntityName)Dto.cs"
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\Update$($script:EntityName)Dto.cs"
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\$($script:EntityName)Dto.cs"
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\Get$($script:EntityName)ListInput.cs"
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\$($script:EntityName)LookupDto.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\DTOs\Create$($script:EntityName)Dto.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\DTOs\Update$($script:EntityName)Dto.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\DTOs\$($script:EntityName)Dto.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\DTOs\Get$($script:EntityName)ListInput.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\DTOs\$($script:EntityName)LookupDto.cs"
     
     # Repository files
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\I$($script:EntityName)Repository.cs"
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.EntityFrameworkCore\$script:ModuleName\Repositories\EfCore$($script:EntityName)Repository.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\$script:ModuleName\I$($script:EntityName)Repository.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.EntityFrameworkCore\$script:ModuleName\Repositories\EfCore$($script:EntityName)Repository.cs"
+    
+    # Manager files
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\$script:ModuleName\Services\$($script:EntityName)Manager.cs"
     
     # Service files
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\I$($script:EntityName)AppService.cs"
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application\$script:ModuleName\$($script:EntityName)AppService.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\I$($script:EntityName)AppService.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application\$script:ModuleName\$($script:EntityName)AppService.cs"
     
     # Controller files
-    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.HttpApi\$script:ModuleName\Controllers\$($script:EntityName)Controller.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.HttpApi\$script:ModuleName\Controllers\$($script:EntityName)Controller.cs"
     
     # Optional files
     if ($json.options.generateSeeder -eq $true) {
-        $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.EntityFrameworkCore\$script:ModuleName\$($script:EntityName)DataSeeder.cs"
+        $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.EntityFrameworkCore\$script:ModuleName\$($script:EntityName)DataSeeder.cs"
     }
     if ($json.options.generateValidation -eq $true) {
-        $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application\$script:ModuleName\Validators\$($script:EntityName)Validator.cs"
+        $generatedFiles += Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application\$script:ModuleName\Validators\$($script:EntityName)Validator.cs"
     }
     if ($json.options.generateTests -eq $true) {
-        $generatedFiles += Join-Path $script:ProjectRoot "test\$script:Namespace.Application.Tests\$script:ModuleName\$($script:EntityName)AppServiceTests.cs"
-        $generatedFiles += Join-Path $script:ProjectRoot "test\$script:Namespace.Domain.Tests\$script:ModuleName\$($script:EntityName)DomainTests.cs"
+        $generatedFiles += Join-Path $script:ProjectRoot "test\$script:BaseNamespace.Application.Tests\$script:ModuleName\$($script:EntityName)AppServiceTests.cs"
+        $generatedFiles += Join-Path $script:ProjectRoot "test\$script:BaseNamespace.Domain.Tests\$script:ModuleName\$($script:EntityName)DomainTests.cs"
     }
     
     # Track the generated entity
@@ -977,8 +1763,34 @@ function New-EntityFiles {
         $dataAnnotationsUsing = "`nusing System.ComponentModel.DataAnnotations;"
     }
     
+    # Generate entity-specific code
+    $constructorParams = Get-ConstructorParams -Properties $Properties
+    $constructorSignature = Get-ConstructorSignature -Properties $Properties
+    $propertySetters = Get-PropertySetters -Properties $Properties
+    $setterMethods = Get-SetterMethods -Properties $Properties -EntityName $script:EntityName
+    $publishEventMethod = Get-PublishEventMethod -BaseClass $script:EntityBaseClass -EntityName $script:EntityName
+    $valueObjectMethods = Get-ValueObjectMethods -BaseClass $script:EntityBaseClass -Properties $Properties
+    $updateMethodParams = Get-UpdateMethodParams -Properties $Properties
+    $updateMethodSignature = Get-UpdateMethodSignature -Properties $Properties
+    $updateSetters = Get-UpdateSetters -Properties $Properties
+    
+    # Generate relationships code
+    $relationshipsCode = ""
+    foreach ($rel in $Relationships) {
+        $relType = $rel.type
+        $relName = $rel.name
+        $relEntity = $rel.relatedEntity
+        $fk = $rel.foreignKey
+        
+        if ($relType -eq "ManyToOne") {
+            $relationshipsCode += "`n        /// <summary>`n        /// Gets or sets the $relName navigation property.`n        /// </summary>`n        [ForeignKey(`"$fk`")]`n        public virtual $relEntity? $relName { get; set; }`n`n    "
+        } elseif ($relType -eq "OneToMany") {
+            $relationshipsCode += "`n        /// <summary>`n        /// Gets or sets the $relName collection.`n        /// </summary>`n        public virtual ICollection<$relEntity> $relName { get; set; } = new List<$relEntity>();`n`n    "
+        }
+    }
+    
     $vars = @{
-        NAMESPACE = $script:Namespace
+        NAMESPACE = $script:BaseNamespace
         MODULE_NAME = $script:ModuleName
         ENTITY_NAME = $script:EntityName
         ENTITY_NAME_LOWER = $entityNameLower
@@ -986,10 +1798,20 @@ function New-EntityFiles {
         ID_TYPE = $script:EntityIdType
         SOFT_DELETE_USING = $softDeleteUsing
         DATA_ANNOTATIONS_USING = $dataAnnotationsUsing
+        CONSTRUCTOR_PARAMS = $constructorParams
+        CONSTRUCTOR_SIGNATURE = $constructorSignature
+        PROPERTY_SETTERS = $propertySetters
+        SETTER_METHODS = $setterMethods
+        PUBLISH_EVENT_METHOD = $publishEventMethod
+        VALUE_OBJECT_METHODS = $valueObjectMethods
+        UPDATE_METHOD_PARAMS = $updateMethodParams
+        UPDATE_METHOD_SIGNATURE = $updateMethodSignature
+        UPDATE_SETTERS = $updateSetters
+        RELATIONSHIPS = $relationshipsCode.TrimEnd()
     }
     
     $templateFile = Join-Path $script:TemplatesDir "domain\entity.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\$script:EntityName.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\$script:ModuleName\$script:EntityName.cs"
     
     Invoke-TemplateWithProperties $templateFile $outputFile $Properties $vars
 }
@@ -999,39 +1821,60 @@ function New-DtoFiles {
     
     Write-Step "Generating DTO files..."
     
+    # Generate foreign key name properties
+    $foreignKeyNames = Get-ForeignKeyNames -Properties $Properties
+    
     $vars = @{
-        NAMESPACE = $script:Namespace
+        NAMESPACE = $script:BaseNamespace
         MODULE_NAME = $script:ModuleName
         ENTITY_NAME = $script:EntityName
+        FOREIGN_KEY_NAMES = $foreignKeyNames
     }
     
     # Create DTO (in Contracts)
     $templateFile = Join-Path $script:TemplatesDir "application\dto-create.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\Create$($script:EntityName)Dto.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\DTOs\Create$($script:EntityName)Dto.cs"
     Invoke-TemplateWithProperties $templateFile $outputFile $Properties $vars
     
     # Update DTO (in Contracts)
     $templateFile = Join-Path $script:TemplatesDir "application\dto-update.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\Update$($script:EntityName)Dto.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\DTOs\Update$($script:EntityName)Dto.cs"
     Invoke-TemplateWithProperties $templateFile $outputFile $Properties $vars
     
-    # Entity DTO (in Contracts)
+    # Entity DTO (in Contracts) - need to handle FOREIGN_KEY_NAMES placeholder
     $templateFile = Join-Path $script:TemplatesDir "application\dto-entity.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\$($script:EntityName)Dto.cs"
-    Invoke-TemplateWithProperties $templateFile $outputFile $Properties $vars
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\DTOs\$($script:EntityName)Dto.cs"
+    
+    # Load template and replace FOREIGN_KEY_NAMES manually
+    $templateContent = Get-Content $templateFile -Raw
+    $templateContent = $templateContent -replace [regex]::Escape('${FOREIGN_KEY_NAMES}'), $foreignKeyNames
+    
+    # Create temp file with replaced content
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    $templateContent | Out-File $tempFile -Encoding UTF8
+    
+    # Now process with standard template processing
+    Invoke-TemplateWithProperties $tempFile $outputFile $Properties $vars
+    
+    # Clean up temp file
+    Remove-Item $tempFile -Force
     
     # List Input DTO (in Contracts)
+    $filterProperties = Get-FilterProperties -Properties $Properties -IdType $script:EntityIdType
+    $vars["FILTER_PROPERTIES"] = $filterProperties
     $templateFile = Join-Path $script:TemplatesDir "application\dto-list-input.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\Get$($script:EntityName)ListInput.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\DTOs\Get$($script:EntityName)ListInput.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
     
     # Lookup DTO (in Contracts)
     $templateFile = Join-Path $script:TemplatesDir "application\dto-lookup.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\DTOs\$($script:EntityName)LookupDto.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\DTOs\$($script:EntityName)LookupDto.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
 }
 
 function New-RepositoryFiles {
+    param([array]$Properties)
+    
     Write-Step "Generating repository files..."
     
     $entityNameLower = $script:EntityName.Substring(0,1).ToLower() + $script:EntityName.Substring(1)
@@ -1041,48 +1884,93 @@ function New-RepositoryFiles {
         $script:DbContextName = "$($script:ModuleName)DbContext"
     }
     
+    # Generate repository methods
+    $repositoryMethods = Get-RepositoryMethods -Properties $Properties -EntityName $script:EntityName -IdType $script:EntityIdType
+    
     $vars = @{
-        NAMESPACE = $script:Namespace
+        NAMESPACE = $script:BaseNamespace
         MODULE_NAME = $script:ModuleName
         ENTITY_NAME = $script:EntityName
         ENTITY_NAME_LOWER = $entityNameLower
         ID_TYPE = $script:EntityIdType
         DB_CONTEXT_NAME = $script:DbContextName
+        REPOSITORY_METHODS = $repositoryMethods
     }
     
     # Repository interface
     $templateFile = Join-Path $script:TemplatesDir "domain\repository-interface.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\I$($script:EntityName)Repository.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\$script:ModuleName\I$($script:EntityName)Repository.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
     
-    # EF Repository
+    # EF Repository - REPOSITORY_METHODS is already in $vars
     $templateFile = Join-Path $script:TemplatesDir "infrastructure\ef-repository.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.EntityFrameworkCore\$script:ModuleName\Repositories\EfCore$($script:EntityName)Repository.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.EntityFrameworkCore\$script:ModuleName\Repositories\EfCore$($script:EntityName)Repository.cs"
+    Invoke-TemplateProcessing $templateFile $outputFile $vars
+}
+
+function New-ManagerFiles {
+    param([array]$Properties)
+    
+    Write-Step "Generating Manager file..."
+    
+    $entityNameLower = $script:EntityName.Substring(0,1).ToLower() + $script:EntityName.Substring(1)
+    
+    # Generate Manager methods
+    $createMethod = Get-ManagerCreateMethod -Properties $Properties -EntityName $script:EntityName -IdType $script:EntityIdType -ModuleName $script:ModuleName
+    $updateNameMethod = Get-ManagerUpdateNameMethod -Properties $Properties -EntityName $script:EntityName -ModuleName $script:ModuleName
+    $validateActivationMethod = Get-ManagerValidateActivationMethod -Properties $Properties -EntityName $script:EntityName
+    
+    $vars = @{
+        NAMESPACE = $script:BaseNamespace
+        MODULE_NAME = $script:ModuleName
+        ENTITY_NAME = $script:EntityName
+        ENTITY_NAME_LOWER = $entityNameLower
+        CREATE_METHOD = $createMethod
+        UPDATE_NAME_METHOD = $updateNameMethod
+        VALIDATE_ACTIVATION_METHOD = $validateActivationMethod
+    }
+    
+    # Manager (Domain Service)
+    $templateFile = Join-Path $script:TemplatesDir "domain\domain-service.template.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\$script:ModuleName\Services\$($script:EntityName)Manager.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
 }
 
 function New-ServiceFiles {
+    param([array]$Properties)
+    
     Write-Step "Generating service files..."
     
     $entityNameLower = $script:EntityName.Substring(0,1).ToLower() + $script:EntityName.Substring(1)
     $entityNamePlural = "$($script:EntityName)s"
     
+    # Generate event publishing code
+    $publishCreateEvent = Get-PublishCreateEvent -EntityName $script:EntityName -BaseClass $script:EntityBaseClass
+    $publishUpdateEvent = Get-PublishUpdateEvent -EntityName $script:EntityName -BaseClass $script:EntityBaseClass
+    $applyDefaultSorting = Get-ApplyDefaultSorting -IdType $script:EntityIdType -EntityName $script:EntityName
+    $searchFilterLogic = Get-SearchFilterLogic -Properties $Properties
+    
     $vars = @{
-        NAMESPACE = $script:Namespace
+        NAMESPACE = $script:BaseNamespace
         MODULE_NAME = $script:ModuleName
         ENTITY_NAME = $script:EntityName
         ENTITY_NAME_LOWER = $entityNameLower
         ENTITY_NAME_PLURAL = $entityNamePlural
+        ID_TYPE = $script:EntityIdType
+        PUBLISH_CREATE_EVENT = $publishCreateEvent
+        PUBLISH_UPDATE_EVENT = $publishUpdateEvent
+        APPLY_DEFAULT_SORTING = $applyDefaultSorting
+        SEARCH_FILTER_LOGIC = $searchFilterLogic
     }
     
     # Service interface (in Contracts)
     $templateFile = Join-Path $script:TemplatesDir "application\app-service-interface.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\I$($script:EntityName)AppService.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\I$($script:EntityName)AppService.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
     
     # Service implementation (in Application)
     $templateFile = Join-Path $script:TemplatesDir "application\app-service-crud.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application\$script:ModuleName\$($script:EntityName)AppService.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application\$script:ModuleName\$($script:EntityName)AppService.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
 }
 
@@ -1095,7 +1983,7 @@ function New-ControllerFiles {
     $entityNameLowerPlural = "$entityNameLower" + "s"
     
     $vars = @{
-        NAMESPACE = $script:Namespace
+        NAMESPACE = $script:BaseNamespace
         MODULE_NAME = $script:ModuleName
         MODULE_NAME_LOWER = $moduleNameLower
         ENTITY_NAME = $script:EntityName
@@ -1105,7 +1993,7 @@ function New-ControllerFiles {
     }
     
     $templateFile = Join-Path $script:TemplatesDir "api\controller-crud.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.HttpApi\$script:ModuleName\Controllers\$($script:EntityName)Controller.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.HttpApi\$script:ModuleName\Controllers\$($script:EntityName)Controller.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
 }
 
@@ -1116,7 +2004,7 @@ function New-SeederFiles {
     $entityNamePlural = "$($script:EntityName)s"
     
     $vars = @{
-        NAMESPACE = $script:Namespace
+        NAMESPACE = $script:BaseNamespace
         MODULE_NAME = $script:ModuleName
         ENTITY_NAME = $script:EntityName
         ENTITY_NAME_LOWER = $entityNameLower
@@ -1125,7 +2013,7 @@ function New-SeederFiles {
     }
     
     $templateFile = Join-Path $script:TemplatesDir "infrastructure\seeder.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.EntityFrameworkCore\$script:ModuleName\$($script:EntityName)DataSeeder.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.EntityFrameworkCore\$script:ModuleName\$($script:EntityName)DataSeeder.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
 }
 
@@ -1133,14 +2021,14 @@ function New-ValidationFiles {
     Write-Step "Generating validation files..."
     
     $vars = @{
-        NAMESPACE = $script:Namespace
+        NAMESPACE = $script:BaseNamespace
         MODULE_NAME = $script:ModuleName
         ENTITY_NAME = $script:EntityName
         VALIDATION_RULES = ""
     }
     
     $templateFile = Join-Path $script:TemplatesDir "application\validator.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application\$script:ModuleName\Validators\$($script:EntityName)Validator.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application\$script:ModuleName\Validators\$($script:EntityName)Validator.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
 }
 
@@ -1151,7 +2039,7 @@ function New-TestFiles {
     $entityNamePlural = "$($script:EntityName)s"
     
     $vars = @{
-        NAMESPACE = $script:Namespace
+        NAMESPACE = $script:BaseNamespace
         MODULE_NAME = $script:ModuleName
         ENTITY_NAME = $script:EntityName
         ENTITY_NAME_LOWER = $entityNameLower
@@ -1160,12 +2048,12 @@ function New-TestFiles {
     
     # Service tests
     $templateFile = Join-Path $script:TemplatesDir "tests\unit-test-service.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "test\$script:Namespace.Application.Tests\$script:ModuleName\$($script:EntityName)AppServiceTests.cs"
+    $outputFile = Join-Path $script:ProjectRoot "test\$script:BaseNamespace.Application.Tests\$script:ModuleName\$($script:EntityName)AppServiceTests.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
     
     # Domain tests
     $templateFile = Join-Path $script:TemplatesDir "tests\unit-test-domain.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "test\$script:Namespace.Domain.Tests\$script:ModuleName\$($script:EntityName)DomainTests.cs"
+    $outputFile = Join-Path $script:ProjectRoot "test\$script:BaseNamespace.Domain.Tests\$script:ModuleName\$($script:EntityName)DomainTests.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
 }
 
@@ -1190,14 +2078,14 @@ function New-ConstantsFile {
     }
     
     $vars = @{
-        NAMESPACE = $script:Namespace
+        NAMESPACE = $script:BaseNamespace
         MODULE_NAME = $script:ModuleName
         ENTITY_NAME = $script:EntityName
         VALIDATION_CONSTANTS = $validationConstants.TrimEnd()
     }
     
     $templateFile = Join-Path $script:TemplatesDir "shared\entity-consts.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\Constants\$($script:EntityName)Constants.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\$script:ModuleName\Constants\$($script:EntityName)Constants.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
 }
 
@@ -1205,14 +2093,14 @@ function New-PermissionsFile {
     Write-Step "Generating permissions file..."
     
     $vars = @{
-        NAMESPACE = $script:Namespace
+        NAMESPACE = $script:BaseNamespace
         MODULE_NAME = $script:ModuleName
         ENTITY_NAME = $script:EntityName
         ADDITIONAL_PERMISSION_CLASSES = ""
     }
     
     $templateFile = Join-Path $script:TemplatesDir "permissions\permissions.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\Permissions\$($script:ModuleName)Permissions.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\Permissions\$($script:ModuleName)Permissions.cs"
     
     # Check if file exists
     if (Test-Path $outputFile) {
@@ -1227,7 +2115,7 @@ function New-PermissionsFile {
     $entityNameLower = $script:EntityName.Substring(0,1).ToLower() + $script:EntityName.Substring(1)
     
     $vars2 = @{
-        NAMESPACE = $script:Namespace
+        NAMESPACE = $script:BaseNamespace
         MODULE_NAME = $script:ModuleName
         MODULE_NAME_LOWER = $moduleNameLower
         ENTITY_NAME = $script:EntityName
@@ -1236,7 +2124,7 @@ function New-PermissionsFile {
     }
     
     $templateFile2 = Join-Path $script:TemplatesDir "permissions\permission-definition-provider.template.cs"
-    $outputFile2 = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\Permissions\$($script:ModuleName)PermissionDefinitionProvider.cs"
+    $outputFile2 = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Application.Contracts\$script:ModuleName\Permissions\$($script:ModuleName)PermissionDefinitionProvider.cs"
     
     if (Test-Path $outputFile2) {
         Write-Info "Permission definition provider already exists, updating..."
@@ -1247,25 +2135,43 @@ function New-PermissionsFile {
 }
 
 function New-EventFiles {
+    param([array]$Properties)
+    
     Write-Step "Generating event files..."
     
+    # Generate foreign key name properties
+    $foreignKeyNames = Get-ForeignKeyNames -Properties $Properties
+    
     $vars = @{
-        NAMESPACE = $script:Namespace
+        NAMESPACE = $script:BaseNamespace
         MODULE_NAME = $script:ModuleName
         ENTITY_NAME = $script:EntityName
         ID_TYPE = $script:EntityIdType
         PROPERTIES = ""
-        FOREIGN_KEY_NAMES = ""
+        FOREIGN_KEY_NAMES = $foreignKeyNames
     }
     
-    # Generate ETO
+    # Generate ETO - need to handle FOREIGN_KEY_NAMES placeholder
     $templateFile = Join-Path $script:TemplatesDir "events\eto.template.cs"
-    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\Events\$($script:EntityName)Eto.cs"
-    Invoke-TemplateProcessing $templateFile $outputFile $vars
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\$script:ModuleName\Events\$($script:EntityName)Eto.cs"
+    
+    # Load template and replace FOREIGN_KEY_NAMES manually
+    $templateContent = Get-Content $templateFile -Raw
+    $templateContent = $templateContent -replace [regex]::Escape('${FOREIGN_KEY_NAMES}'), $foreignKeyNames
+    
+    # Create temp file with replaced content
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    $templateContent | Out-File $tempFile -Encoding UTF8
+    
+    # Now process with standard template processing
+    Invoke-TemplateProcessing $tempFile $outputFile $vars
+    
+    # Clean up temp file
+    Remove-Item $tempFile -Force
     
     # Generate event types
     $templateFile2 = Join-Path $script:TemplatesDir "events\event-types.template.cs"
-    $outputFile2 = Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\Events\$($script:EntityName)EtoTypes.cs"
+    $outputFile2 = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\$script:ModuleName\Events\$($script:EntityName)EtoTypes.cs"
     Invoke-TemplateProcessing $templateFile2 $outputFile2 $vars
 }
 
@@ -1273,7 +2179,7 @@ function New-LocalizationEntries {
     Write-Step "Generating localization entries..."
     
     # Create English localization
-    $localizationDir = Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\Localization\$script:ModuleName"
+    $localizationDir = Join-Path $script:ProjectRoot "src\$script:BaseNamespace.Domain\Localization\$script:ModuleName"
     $enFile = Join-Path $localizationDir "en.json"
     
     if (Test-Path $enFile) {

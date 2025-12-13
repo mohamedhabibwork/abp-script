@@ -1,6 +1,6 @@
 using System;
 using System.ComponentModel.DataAnnotations;
-using ${NAMESPACE}.${MODULE_NAME}.Constants;
+using ${NAMESPACE}.Domain.${MODULE_NAME}.Constants;
 
 namespace ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.DTOs
 {

@@ -1,7 +1,7 @@
 using System;
 using Volo.Abp.Domain.Entities.Events.Distributed;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.Events
+namespace ${NAMESPACE}.Domain.${MODULE_NAME}.Events
 {
     /// <summary>
     /// Event Transfer Object for ${ENTITY_NAME}.

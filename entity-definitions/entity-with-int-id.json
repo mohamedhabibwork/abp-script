@@ -1,8 +1,8 @@
 {
   "entity": {
     "name": "Category",
-    "namespace": "MyCompany.MyProject",
-    "moduleName": "Catalog",
+    "namespace": "EdeServices",
+    "moduleName": "EdeServices",
     "idType": "int",
     "baseClass": "Entity<int>"
   },

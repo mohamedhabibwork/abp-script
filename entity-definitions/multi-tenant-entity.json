@@ -1,9 +1,9 @@
 {
   "entity": {
     "name": "Order",
-    "namespace": "MyCompany.MyProject",
-    "moduleName": "Sales",
-    "idType": "Guid",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Sales",
+  "idType": "Guid",
     "baseClass": "FullAuditedAggregateRoot<Guid>, IMultiTenant"
   },
   "properties": [

@@ -9,16 +9,15 @@ using Volo.Abp.Application.Dtos;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Caching;
 using Volo.Abp.Domain.Repositories;
-using ${NAMESPACE}.${MODULE_NAME}.Application.Contracts;
-using ${NAMESPACE}.${MODULE_NAME}.Application.Contracts.DTOs;
-using ${NAMESPACE}.${MODULE_NAME}.Application.Contracts.Services;
-using ${NAMESPACE}.${MODULE_NAME}.Constants;
-using ${NAMESPACE}.${MODULE_NAME}.Domain.Entities;
-using ${NAMESPACE}.${MODULE_NAME}.Events;
-using ${NAMESPACE}.${MODULE_NAME}.Permissions;
-using static ${NAMESPACE}.${MODULE_NAME}.Permissions.${MODULE_NAME}Permissions;
+using ${NAMESPACE}.Application.Contracts.${MODULE_NAME};
+using ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.DTOs;
+using ${NAMESPACE}.Domain.${MODULE_NAME}.Constants;
+using ${NAMESPACE}.Domain.${MODULE_NAME};
+using ${NAMESPACE}.Domain.${MODULE_NAME}.Events;
+using ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.Permissions;
+using static ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.Permissions.${MODULE_NAME}Permissions;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.Application.Services
+namespace ${NAMESPACE}.Application.${MODULE_NAME}
 {
     /// <summary>
     /// Application service for ${ENTITY_NAME} management with caching and distributed events.

@@ -1,9 +1,9 @@
 {
   "entity": {
     "name": "Product",
-    "namespace": "MyCompany.MyProject",
-    "moduleName": "Catalog",
-    "idType": "Guid",
+  "namespace": "MyCompany.MyProject",
+  "moduleName": "Catalog",
+  "idType": "Guid",
     "baseClass": "FullAuditedAggregateRoot<Guid>"
   },
   "properties": [

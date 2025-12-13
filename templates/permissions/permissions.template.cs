@@ -1,6 +1,6 @@
 using Volo.Abp.Reflection;
 
-namespace ${NAMESPACE}.${MODULE_NAME}.Permissions
+namespace ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.Permissions
 {
     /// <summary>
     /// Permission names for ${MODULE_NAME} module.
