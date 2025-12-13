@@ -1,7 +1,7 @@
 {
   "entity": {
     "name": "Product",
-    "namespace": "MyCompany.MyProject",
+    "namespace": "TestApp",
     "moduleName": "Catalog",
     "idType": "Guid",
     "baseClass": "FullAuditedAggregateRoot<Guid>"
@@ -15,32 +15,33 @@
       "minLength": 3
     },
     {
-      "name": "Price",
-      "type": "decimal",
-      "required": true
-    },
-    {
-      "name": "Stock",
-      "type": "int",
-      "required": true
-    },
-    {
       "name": "Description",
       "type": "string",
       "nullable": true,
-      "maxLength": 2000
+      "maxLength": 500
+    },
+    {
+      "name": "Price",
+      "type": "decimal",
+      "required": true
     },
     {
       "name": "IsActive",
       "type": "bool",
       "required": true,
       "defaultValue": "true"
+    },
+    {
+      "name": "CategoryId",
+      "type": "Guid",
+      "required": true,
+      "isForeignKey": true
     }
   ],
   "relationships": [],
   "options": {
     "generateSeeder": true,
-    "generateTests": false,
+    "generateTests": true,
     "generateValidation": true
   }
 }

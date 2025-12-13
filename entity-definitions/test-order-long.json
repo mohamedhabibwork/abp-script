@@ -1,7 +1,7 @@
 {
   "entity": {
     "name": "Order",
-    "namespace": "MyCompany.MyProject",
+    "namespace": "TestApp",
     "moduleName": "Sales",
     "idType": "long",
     "baseClass": "AuditedAggregateRoot<long>"
@@ -11,11 +11,7 @@
       "name": "OrderNumber",
       "type": "string",
       "required": true,
-      "maxLength": 50,
-      "validation": {
-        "pattern": "^ORD-[0-9]{8}$",
-        "asyncUnique": true
-      }
+      "maxLength": 50
     },
     {
       "name": "OrderDate",
@@ -31,7 +27,7 @@
       "name": "Status",
       "type": "string",
       "required": true,
-      "maxLength": 50
+      "maxLength": 20
     },
     {
       "name": "CustomerId",
@@ -40,23 +36,9 @@
       "isForeignKey": true
     }
   ],
-  "relationships": [
-    {
-      "name": "Customer",
-      "type": "ManyToOne",
-      "relatedEntity": "Customer",
-      "foreignKey": "CustomerId",
-      "required": true
-    },
-    {
-      "name": "OrderItems",
-      "type": "OneToMany",
-      "relatedEntity": "OrderItem",
-      "foreignKey": "OrderId"
-    }
-  ],
+  "relationships": [],
   "options": {
-    "generateSeeder": true,
+    "generateSeeder": false,
     "generateTests": true,
     "generateValidation": true
   }

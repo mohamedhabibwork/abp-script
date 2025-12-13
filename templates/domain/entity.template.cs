@@ -3,6 +3,10 @@ using Volo.Abp.Domain.Entities;
 using Volo.Abp.Domain.Entities.Auditing;
 ${DATA_ANNOTATIONS_USING}
 ${SOFT_DELETE_USING}
+using ${NAMESPACE}.${MODULE_NAME}.Events;
+using ${NAMESPACE}.${MODULE_NAME}.Constants;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace ${NAMESPACE}.Domain.${MODULE_NAME}
 {
@@ -11,21 +15,6 @@ namespace ${NAMESPACE}.Domain.${MODULE_NAME}
     /// </summary>
     public class ${ENTITY_NAME} : ${BASE_CLASS}
     {
-        /// <summary>
-        /// Gets or sets the name of the ${ENTITY_NAME}.
-        /// </summary>
-        public string Name { get; set; }
-
-        /// <summary>
-        /// Gets or sets the description of the ${ENTITY_NAME}.
-        /// </summary>
-        public string? Description { get; set; }
-
-        /// <summary>
-        /// Gets or sets a value indicating whether this ${ENTITY_NAME} is active.
-        /// </summary>
-        public bool IsActive { get; set; }
-
         ${PROPERTIES}
 
         // Navigation Properties
@@ -42,48 +31,25 @@ namespace ${NAMESPACE}.Domain.${MODULE_NAME}
         /// Initializes a new instance of the <see cref="${ENTITY_NAME}"/> class.
         /// </summary>
         /// <param name="id">The unique identifier.</param>
-        /// <param name="name">The name.</param>
-        public ${ENTITY_NAME}(${ID_TYPE} id, string name)${BASE_CLASS_CONSTRUCTOR}
+        ${CONSTRUCTOR_PARAMS}
+        public ${ENTITY_NAME}(${ID_TYPE} id${CONSTRUCTOR_SIGNATURE})${BASE_CLASS_CONSTRUCTOR}
         {
-            ${ID_ASSIGNMENT}SetName(name);
-            IsActive = true;
+            ${ID_ASSIGNMENT}${PROPERTY_SETTERS}
         }
 
-        /// <summary>
-        /// Sets the name with validation.
-        /// </summary>
-        /// <param name="name">The name to set.</param>
-        /// <exception cref="ArgumentNullException">Thrown when name is null or empty.</exception>
-        public ${ENTITY_NAME} SetName(string name)
-        {
-            Name = Check.NotNullOrWhiteSpace(name, nameof(name), ${ENTITY_NAME}Consts.MaxNameLength);
-            return this;
-        }
+        ${SETTER_METHODS}
+
+        ${PUBLISH_EVENT_METHOD}
+
+        ${VALUE_OBJECT_METHODS}
 
         /// <summary>
-        /// Sets the description.
+        /// Updates the ${ENTITY_NAME} with new values.
         /// </summary>
-        /// <param name="description">The description to set.</param>
-        public ${ENTITY_NAME} SetDescription(string? description)
+        ${UPDATE_METHOD_PARAMS}
+        public void Update(${UPDATE_METHOD_SIGNATURE})
         {
-            Description = description;
-            return this;
-        }
-
-        /// <summary>
-        /// Activates the ${ENTITY_NAME}.
-        /// </summary>
-        public void Activate()
-        {
-            IsActive = true;
-        }
-
-        /// <summary>
-        /// Deactivates the ${ENTITY_NAME}.
-        /// </summary>
-        public void Deactivate()
-        {
-            IsActive = false;
+            ${UPDATE_SETTERS}
         }
     }
 }

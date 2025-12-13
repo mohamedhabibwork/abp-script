@@ -1056,11 +1056,15 @@ generate_entity_from_json() {
     local relationships=$(parse_relationships_from_json "$json_file")
     
     # Generate all components
+    generate_constants_file "$properties"
+    generate_permissions_file
+    generate_event_files
     generate_entity_files "$properties" "$relationships"
     generate_dto_files "$properties"
     generate_repository_files
     generate_service_files
     generate_controller_files
+    generate_localization_entries
     
     # Check options
     local generate_seeder=$(jq -r '.options.generateSeeder // false' "$json_file")
@@ -1081,6 +1085,13 @@ generate_entity_from_json() {
     
     # Collect generated files for tracking
     local generated_files=()
+    
+    # Constants, permissions, and events
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/Constants/${ENTITY_NAME}Constants.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/Permissions/${MODULE_NAME}Permissions.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/Permissions/${MODULE_NAME}PermissionDefinitionProvider.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/Events/${ENTITY_NAME}Eto.cs")
+    generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/Events/${ENTITY_NAME}EtoTypes.cs")
     
     # Entity files
     generated_files+=("${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/${ENTITY_NAME}.cs")
@@ -1384,6 +1395,143 @@ generate_test_files() {
         "ENTITY_NAME=$ENTITY_NAME" \
         "ENTITY_NAME_LOWER=$entity_name_lower" \
         "ENTITY_NAME_PLURAL=$entity_name_plural"
+}
+
+generate_constants_file() {
+    local properties=$1
+    
+    log_step "Generating constants file..."
+    
+    # Generate validation constants from properties
+    local validation_constants=""
+    if command -v jq &> /dev/null && [ "$properties" != "[]" ] && [ -n "$properties" ]; then
+        local prop_count=$(echo "$properties" | jq 'length' 2>/dev/null || echo "0")
+        for ((i=0; i<prop_count; i++)); do
+            local prop=$(echo "$properties" | jq ".[$i]")
+            local prop_name=$(echo "$prop" | jq -r '.name')
+            local max_length=$(echo "$prop" | jq -r '.maxLength // ""')
+            local min_length=$(echo "$prop" | jq -r '.minLength // ""')
+            
+            if [ -n "$max_length" ] && [ "$max_length" != "null" ]; then
+                validation_constants="${validation_constants}            public const int ${prop_name}MaxLength = ${max_length};"$'\n'
+            fi
+            if [ -n "$min_length" ] && [ "$min_length" != "null" ]; then
+                validation_constants="${validation_constants}            public const int ${prop_name}MinLength = ${min_length};"$'\n'
+            fi
+        done
+    fi
+    
+    if [ -z "$validation_constants" ]; then
+        validation_constants="            // Add validation constants here"
+    fi
+    
+    process_template \
+        "${TEMPLATES_DIR}/shared/entity-consts.template.cs" \
+        "${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/Constants/${ENTITY_NAME}Constants.cs" \
+        "NAMESPACE=$NAMESPACE" \
+        "MODULE_NAME=$MODULE_NAME" \
+        "ENTITY_NAME=$ENTITY_NAME" \
+        "VALIDATION_CONSTANTS=$validation_constants"
+}
+
+generate_permissions_file() {
+    log_step "Generating permissions file..."
+    
+    local output_file="${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/Permissions/${MODULE_NAME}Permissions.cs"
+    
+    if [ -f "$output_file" ]; then
+        log_info "Permissions file already exists, updating..."
+        # TODO: Implement merge logic to add new entity permissions
+    else
+        process_template \
+            "${TEMPLATES_DIR}/permissions/permissions.template.cs" \
+            "$output_file" \
+            "NAMESPACE=$NAMESPACE" \
+            "MODULE_NAME=$MODULE_NAME" \
+            "ENTITY_NAME=$ENTITY_NAME" \
+            "ADDITIONAL_PERMISSION_CLASSES="
+    fi
+    
+    # Generate permission definition provider
+    local module_name_lower="$(echo ${MODULE_NAME:0:1} | tr '[:upper:]' '[:lower:]')${MODULE_NAME:1}"
+    local entity_name_lower="$(echo ${ENTITY_NAME:0:1} | tr '[:upper:]' '[:lower:]')${ENTITY_NAME:1}"
+    local output_file2="${PROJECT_ROOT}/src/${NAMESPACE}.Application.Contracts/${MODULE_NAME}/Permissions/${MODULE_NAME}PermissionDefinitionProvider.cs"
+    
+    if [ -f "$output_file2" ]; then
+        log_info "Permission definition provider already exists, updating..."
+        # TODO: Implement merge logic
+    else
+        process_template \
+            "${TEMPLATES_DIR}/permissions/permission-definition-provider.template.cs" \
+            "$output_file2" \
+            "NAMESPACE=$NAMESPACE" \
+            "MODULE_NAME=$MODULE_NAME" \
+            "MODULE_NAME_LOWER=$module_name_lower" \
+            "ENTITY_NAME=$ENTITY_NAME" \
+            "ENTITY_NAME_LOWER=$entity_name_lower" \
+            "ADDITIONAL_PERMISSION_DEFINITIONS="
+    fi
+}
+
+generate_event_files() {
+    log_step "Generating event files..."
+    
+    # Generate ETO
+    process_template \
+        "${TEMPLATES_DIR}/events/eto.template.cs" \
+        "${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/Events/${ENTITY_NAME}Eto.cs" \
+        "NAMESPACE=$NAMESPACE" \
+        "MODULE_NAME=$MODULE_NAME" \
+        "ENTITY_NAME=$ENTITY_NAME" \
+        "ID_TYPE=$ENTITY_ID_TYPE" \
+        "PROPERTIES=" \
+        "FOREIGN_KEY_NAMES="
+    
+    # Generate event types
+    process_template \
+        "${TEMPLATES_DIR}/events/event-types.template.cs" \
+        "${PROJECT_ROOT}/src/${NAMESPACE}.Domain/${MODULE_NAME}/Events/${ENTITY_NAME}EtoTypes.cs" \
+        "NAMESPACE=$NAMESPACE" \
+        "MODULE_NAME=$MODULE_NAME" \
+        "ENTITY_NAME=$ENTITY_NAME"
+}
+
+generate_localization_entries() {
+    log_step "Generating localization entries..."
+    
+    # English localization
+    local localization_dir="${PROJECT_ROOT}/src/${NAMESPACE}.Domain/Localization/${MODULE_NAME}"
+    local en_file="${localization_dir}/en.json"
+    
+    if [ -f "$en_file" ] && command -v jq &> /dev/null; then
+        local temp_file=$(mktemp)
+        jq --arg entity "$ENTITY_NAME" \
+           '. + {
+               texts: (.texts + {
+                   ("Permission:" + $entity): ($entity + " management"),
+                   ("Permission:" + $entity + ".Create"): ("Create " + $entity),
+                   ("Permission:" + $entity + ".Update"): ("Update " + $entity),
+                   ("Permission:" + $entity + ".Delete"): ("Delete " + $entity)
+               })
+           }' "$en_file" > "$temp_file" && mv "$temp_file" "$en_file"
+        log_success "Updated English localization"
+    fi
+    
+    # Arabic localization
+    local ar_file="${localization_dir}/ar.json"
+    if [ -f "$ar_file" ] && command -v jq &> /dev/null; then
+        local temp_file=$(mktemp)
+        jq --arg entity "$ENTITY_NAME" \
+           '. + {
+               texts: (.texts + {
+                   ("Permission:" + $entity): ("إدارة " + $entity),
+                   ("Permission:" + $entity + ".Create"): ("إنشاء " + $entity),
+                   ("Permission:" + $entity + ".Update"): ("تحديث " + $entity),
+                   ("Permission:" + $entity + ".Delete"): ("حذف " + $entity)
+               })
+           }' "$ar_file" > "$temp_file" && mv "$temp_file" "$ar_file"
+        log_success "Updated Arabic localization"
+    fi
 }
 
 ################################################################################

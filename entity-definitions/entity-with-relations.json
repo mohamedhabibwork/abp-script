@@ -1,11 +1,11 @@
 {
-  "namespace": "MyCompany.MyProject",
-  "moduleName": "Catalog",
-  "entityName": "Product",
-  "entityNamePlural": "Products",
-  "baseClass": "FullAuditedAggregateRoot",
-  "idType": "Guid",
-  "dbContextName": "CatalogDbContext",
+  "entity": {
+    "name": "Product",
+    "namespace": "MyCompany.MyProject",
+    "moduleName": "Catalog",
+    "idType": "Guid",
+    "baseClass": "FullAuditedAggregateRoot<Guid>"
+  },
   "properties": [
     {
       "name": "Name",
@@ -18,25 +18,16 @@
       "name": "SKU",
       "type": "string",
       "required": true,
-      "maxLength": 50,
-      "validation": {
-        "pattern": "^[A-Z0-9-]+$",
-        "asyncUnique": true
-      }
+      "maxLength": 50
     },
     {
       "name": "Price",
       "type": "decimal",
-      "required": true,
-      "validation": {
-        "min": 0,
-        "max": 999999
-      }
+      "required": true
     },
     {
       "name": "Description",
       "type": "string",
-      "required": false,
       "nullable": true,
       "maxLength": 2000
     },
@@ -49,7 +40,8 @@
     {
       "name": "CategoryId",
       "type": "Guid",
-      "required": true
+      "required": true,
+      "isForeignKey": true
     }
   ],
   "relationships": [
@@ -74,12 +66,9 @@
     }
   ],
   "options": {
-    "generatePermissions": true,
-    "generateLocalization": true,
-    "advancedValidation": true,
-    "apiDocumentation": true,
-    "comprehensiveTests": true,
-    "auditLogging": true
+    "generateSeeder": true,
+    "generateTests": true,
+    "generateValidation": true
   }
 }
 

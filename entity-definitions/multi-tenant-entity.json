@@ -1,21 +1,18 @@
 {
-  "namespace": "MyCompany.MyProject",
-  "moduleName": "Sales",
-  "entityName": "Order",
-  "entityNamePlural": "Orders",
-  "baseClass": "FullAuditedAggregateRoot",
-  "idType": "Guid",
-  "dbContextName": "SalesDbContext",
+  "entity": {
+    "name": "Order",
+    "namespace": "MyCompany.MyProject",
+    "moduleName": "Sales",
+    "idType": "Guid",
+    "baseClass": "FullAuditedAggregateRoot<Guid>, IMultiTenant"
+  },
   "properties": [
     {
       "name": "OrderNumber",
       "type": "string",
       "required": true,
       "maxLength": 50,
-      "validation": {
-        "pattern": "^ORD-[0-9]{8}$",
-        "asyncUnique": true
-      }
+      "minLength": 5
     },
     {
       "name": "OrderDate",
@@ -25,10 +22,7 @@
     {
       "name": "TotalAmount",
       "type": "decimal",
-      "required": true,
-      "validation": {
-        "min": 0
-      }
+      "required": true
     },
     {
       "name": "Status",
@@ -39,14 +33,19 @@
     {
       "name": "Notes",
       "type": "string",
-      "required": false,
       "nullable": true,
       "maxLength": 1000
     },
     {
       "name": "CustomerId",
       "type": "Guid",
-      "required": true
+      "required": true,
+      "isForeignKey": true
+    },
+    {
+      "name": "TenantId",
+      "type": "Guid?",
+      "nullable": true
     }
   ],
   "relationships": [
@@ -65,12 +64,9 @@
     }
   ],
   "options": {
-    "generatePermissions": true,
-    "generateLocalization": true,
-    "advancedValidation": true,
-    "apiDocumentation": true,
-    "comprehensiveTests": true,
-    "auditLogging": true
+    "generateSeeder": true,
+    "generateTests": true,
+    "generateValidation": true
   }
 }
 

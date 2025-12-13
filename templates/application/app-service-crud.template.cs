@@ -1,211 +1,167 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
+using Volo.Abp;
 using Volo.Abp.Application.Dtos;
 using Volo.Abp.Application.Services;
+using Volo.Abp.Caching;
 using Volo.Abp.Domain.Repositories;
-using Volo.Abp.EventBus.Distributed;
-using ${NAMESPACE}.Application.Contracts.${MODULE_NAME};
-using ${NAMESPACE}.Application.Contracts.${MODULE_NAME}.DTOs;
-using ${NAMESPACE}.Domain.${MODULE_NAME};
+using ${NAMESPACE}.${MODULE_NAME}.Application.Contracts;
+using ${NAMESPACE}.${MODULE_NAME}.Application.Contracts.DTOs;
+using ${NAMESPACE}.${MODULE_NAME}.Application.Contracts.Services;
+using ${NAMESPACE}.${MODULE_NAME}.Constants;
+using ${NAMESPACE}.${MODULE_NAME}.Domain.Entities;
+using ${NAMESPACE}.${MODULE_NAME}.Events;
+using ${NAMESPACE}.${MODULE_NAME}.Permissions;
+using static ${NAMESPACE}.${MODULE_NAME}.Permissions.${MODULE_NAME}Permissions;
 
-namespace ${NAMESPACE}.Application.${MODULE_NAME}
+namespace ${NAMESPACE}.${MODULE_NAME}.Application.Services
 {
     /// <summary>
-    /// Application service for ${ENTITY_NAME} management.
-    /// Implements CRUD operations with full business logic.
-    /// Follows Single Responsibility and Dependency Inversion principles.
+    /// Application service for ${ENTITY_NAME} management with caching and distributed events.
     /// </summary>
-    [Authorize]
-    public class ${ENTITY_NAME}AppService : ApplicationService, I${ENTITY_NAME}AppService
+    [RemoteService(false)]
+    [Authorize(${ENTITY_NAME}Management.Default)]
+    public class ${ENTITY_NAME}AppService : 
+        CrudAppService<
+            ${ENTITY_NAME},
+            ${ENTITY_NAME}Dto,
+            ${ID_TYPE},
+            SearchedPagedAndSortedResultRequestDto,
+            Create${ENTITY_NAME}Dto,
+            Update${ENTITY_NAME}Dto>,
+        I${ENTITY_NAME}AppService
     {
-        private readonly I${ENTITY_NAME}Repository _${ENTITY_NAME_LOWER}Repository;
-        private readonly ${ENTITY_NAME}Manager _${ENTITY_NAME_LOWER}Manager;
-        private readonly IDistributedEventBus _distributedEventBus;
+        private readonly IDistributedCache<${ENTITY_NAME}Dto> _cache;
+        private readonly IDistributedCache<List<${ENTITY_NAME}Dto>> _listCache;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="${ENTITY_NAME}AppService"/> class.
-        /// </summary>
-        /// <param name="${ENTITY_NAME_LOWER}Repository">The ${ENTITY_NAME} repository.</param>
-        /// <param name="${ENTITY_NAME_LOWER}Manager">The ${ENTITY_NAME} domain service.</param>
-        /// <param name="distributedEventBus">The distributed event bus.</param>
         public ${ENTITY_NAME}AppService(
-            I${ENTITY_NAME}Repository ${ENTITY_NAME_LOWER}Repository,
-            ${ENTITY_NAME}Manager ${ENTITY_NAME_LOWER}Manager,
-            IDistributedEventBus distributedEventBus)
+            IRepository<${ENTITY_NAME}, ${ID_TYPE}> repository,
+            IDistributedCache<${ENTITY_NAME}Dto> cache,
+            IDistributedCache<List<${ENTITY_NAME}Dto>> listCache)
+            : base(repository)
         {
-            _${ENTITY_NAME_LOWER}Repository = ${ENTITY_NAME_LOWER}Repository;
-            _${ENTITY_NAME_LOWER}Manager = ${ENTITY_NAME_LOWER}Manager;
-            _distributedEventBus = distributedEventBus;
+            _cache = cache;
+            _listCache = listCache;
+
+            GetPolicyName = ${ENTITY_NAME}Management.Default;
+            GetListPolicyName = ${ENTITY_NAME}Management.Default;
+            CreatePolicyName = ${ENTITY_NAME}Management.Create;
+            UpdatePolicyName = ${ENTITY_NAME}Management.Update;
+            DeletePolicyName = ${ENTITY_NAME}Management.Delete;
         }
 
         /// <summary>
-        /// Gets a ${ENTITY_NAME} by ID.
+        /// Gets a ${ENTITY_NAME} by ID with caching.
         /// </summary>
-        /// <param name="id">The ${ENTITY_NAME} ID.</param>
-        /// <returns>The ${ENTITY_NAME} DTO.</returns>
-        public virtual async Task<${ENTITY_NAME}Dto> GetAsync(Guid id)
+        public override async Task<${ENTITY_NAME}Dto> GetAsync(${ID_TYPE} id)
         {
-            var entity = await _${ENTITY_NAME_LOWER}Repository.GetAsync(id);
-            return ObjectMapper.Map<${ENTITY_NAME}, ${ENTITY_NAME}Dto>(entity);
-        }
-
-        /// <summary>
-        /// Gets a paginated list of ${ENTITY_NAME} entities.
-        /// </summary>
-        /// <param name="input">The list input parameters.</param>
-        /// <returns>Paginated result of ${ENTITY_NAME} DTOs.</returns>
-        public virtual async Task<PagedResultDto<${ENTITY_NAME}Dto>> GetListAsync(Get${ENTITY_NAME}ListInput input)
-        {
-            var totalCount = await _${ENTITY_NAME_LOWER}Repository.GetCountAsync(
-                input.Filter,
-                input.IsActive
-            );
-
-            var items = await _${ENTITY_NAME_LOWER}Repository.GetListAsync(
-                input.SkipCount,
-                input.MaxResultCount,
-                input.Sorting,
-                input.Filter,
-                input.IsActive
-            );
-
-            return new PagedResultDto<${ENTITY_NAME}Dto>(
-                totalCount,
-                ObjectMapper.Map<List<${ENTITY_NAME}>, List<${ENTITY_NAME}Dto>>(items)
-            );
-        }
-
-        /// <summary>
-        /// Creates a new ${ENTITY_NAME}.
-        /// </summary>
-        /// <param name="input">The create DTO.</param>
-        /// <returns>The created ${ENTITY_NAME} DTO.</returns>
-        [Authorize("${MODULE_NAME}.${ENTITY_NAME_PLURAL}.Create")]
-        public virtual async Task<${ENTITY_NAME}Dto> CreateAsync(Create${ENTITY_NAME}Dto input)
-        {
-            // Use domain service for business logic
-            var entity = await _${ENTITY_NAME_LOWER}Manager.CreateAsync(
-                input.Name,
-                input.Description
-            );
-
-            entity.IsActive = input.IsActive;
-
-            // Save to repository
-            var createdEntity = await _${ENTITY_NAME_LOWER}Repository.InsertAsync(entity, autoSave: true);
-
-            // Publish distributed event
-            await _distributedEventBus.PublishAsync(
-                new ${ENTITY_NAME}CreatedEto(createdEntity.Id, createdEntity.Name)
-                {
-                    TenantId = CurrentTenant.Id
-                }
-            );
-
-            return ObjectMapper.Map<${ENTITY_NAME}, ${ENTITY_NAME}Dto>(createdEntity);
-        }
-
-        /// <summary>
-        /// Updates an existing ${ENTITY_NAME}.
-        /// </summary>
-        /// <param name="id">The ${ENTITY_NAME} ID.</param>
-        /// <param name="input">The update DTO.</param>
-        /// <returns>The updated ${ENTITY_NAME} DTO.</returns>
-        [Authorize("${MODULE_NAME}.${ENTITY_NAME_PLURAL}.Edit")]
-        public virtual async Task<${ENTITY_NAME}Dto> UpdateAsync(Guid id, Update${ENTITY_NAME}Dto input)
-        {
-            var entity = await _${ENTITY_NAME_LOWER}Repository.GetAsync(id);
-
-            // Use domain service for name update with validation
-            await _${ENTITY_NAME_LOWER}Manager.UpdateNameAsync(entity, input.Name);
-
-            entity.SetDescription(input.Description);
-            entity.IsActive = input.IsActive;
-
-            // Save changes
-            var updatedEntity = await _${ENTITY_NAME_LOWER}Repository.UpdateAsync(entity, autoSave: true);
-
-            // Publish distributed event
-            await _distributedEventBus.PublishAsync(
-                new ${ENTITY_NAME}UpdatedEto(updatedEntity.Id, updatedEntity.Name)
-                {
-                    TenantId = CurrentTenant.Id
-                }
-            );
-
-            return ObjectMapper.Map<${ENTITY_NAME}, ${ENTITY_NAME}Dto>(updatedEntity);
-        }
-
-        /// <summary>
-        /// Deletes a ${ENTITY_NAME}.
-        /// </summary>
-        /// <param name="id">The ${ENTITY_NAME} ID.</param>
-        [Authorize("${MODULE_NAME}.${ENTITY_NAME_PLURAL}.Delete")]
-        public virtual async Task DeleteAsync(Guid id)
-        {
-            var entity = await _${ENTITY_NAME_LOWER}Repository.GetAsync(id);
-
-            // Validate deletion using domain service
-            var canDelete = await _${ENTITY_NAME_LOWER}Manager.CanDeleteAsync(entity);
-            if (!canDelete)
+            var cacheKey = $"{${ENTITY_NAME}Constants.CacheKeys.SingleKey}:{id}";
+            var cachedDto = await _cache.GetAsync(cacheKey);
+            
+            if (cachedDto != null)
             {
-                throw new BusinessException(${MODULE_NAME}DomainErrorCodes.${ENTITY_NAME}CannotBeDeleted);
+                return cachedDto;
             }
 
-            await _${ENTITY_NAME_LOWER}Repository.DeleteAsync(id, autoSave: true);
-
-            // Publish distributed event
-            await _distributedEventBus.PublishAsync(
-                new ${ENTITY_NAME}DeletedEto(id, entity.Name)
-                {
-                    TenantId = CurrentTenant.Id
-                }
-            );
-        }
-
-        /// <summary>
-        /// Gets a lookup list of ${ENTITY_NAME} entities (for dropdowns).
-        /// </summary>
-        /// <returns>List of ${ENTITY_NAME} lookup DTOs.</returns>
-        [Authorize(${MODULE_NAME}Permissions.${ENTITY_NAME_PLURAL}.Default)]
-        public virtual async Task<ListResultDto<${ENTITY_NAME}LookupDto>> GetLookupAsync()
-        {
-            var items = await _${ENTITY_NAME_LOWER}Repository.GetActiveListAsync();
+            var entity = await Repository.GetAsync(id);
+            var dto = ObjectMapper.Map<${ENTITY_NAME}, ${ENTITY_NAME}Dto>(entity);
             
-            return new ListResultDto<${ENTITY_NAME}LookupDto>(
-                ObjectMapper.Map<List<${ENTITY_NAME}>, List<${ENTITY_NAME}LookupDto>>(items)
-            );
+            await _cache.SetAsync(cacheKey, dto);
+            
+            return dto;
         }
 
         /// <summary>
-        /// Activates a ${ENTITY_NAME}.
+        /// Gets a paginated list of ${ENTITY_NAME} entities with caching.
         /// </summary>
-        /// <param name="id">The ${ENTITY_NAME} ID.</param>
-        [Authorize(${MODULE_NAME}Permissions.${ENTITY_NAME_PLURAL}.Edit)]
-        public virtual async Task ActivateAsync(Guid id)
+        public override async Task<PagedResultDto<${ENTITY_NAME}Dto>> GetListAsync(SearchedPagedAndSortedResultRequestDto input)
         {
-            var entity = await _${ENTITY_NAME_LOWER}Repository.GetAsync(id);
+            if (input.Sorting.IsNullOrWhiteSpace())
+            {
+                input.Sorting = ${ENTITY_NAME}Constants.DefaultSorting;
+            }
 
-            // Validate activation using domain service
-            await _${ENTITY_NAME_LOWER}Manager.ValidateActivationAsync(entity);
+            var result = await base.GetListAsync(input);
 
-            entity.Activate();
-            await _${ENTITY_NAME_LOWER}Repository.UpdateAsync(entity, autoSave: true);
+            foreach (var dto in result.Items)
+            {
+                var cacheKey = $"{${ENTITY_NAME}Constants.CacheKeys.SingleKey}:{dto.Id}";
+                await _cache.SetAsync(cacheKey, dto);
+            }
+
+            return result;
         }
 
         /// <summary>
-        /// Deactivates a ${ENTITY_NAME}.
+        /// Creates a new ${ENTITY_NAME} and publishes distributed event.
         /// </summary>
-        /// <param name="id">The ${ENTITY_NAME} ID.</param>
-        [Authorize(${MODULE_NAME}Permissions.${ENTITY_NAME_PLURAL}.Edit)]
-        public virtual async Task DeactivateAsync(Guid id)
+        [Authorize(${ENTITY_NAME}Management.Create)]
+        public override async Task<${ENTITY_NAME}Dto> CreateAsync(Create${ENTITY_NAME}Dto input)
         {
-            var entity = await _${ENTITY_NAME_LOWER}Repository.GetAsync(id);
-            entity.Deactivate();
-            await _${ENTITY_NAME_LOWER}Repository.UpdateAsync(entity, autoSave: true);
+            await CheckCreatePolicyAsync();
+
+            var entity = await MapToEntityAsync(input);
+
+            await Repository.InsertAsync(entity, autoSave: true);
+
+            await _listCache.RemoveAsync(${ENTITY_NAME}Constants.CacheKeys.ListCacheKey);
+
+${PUBLISH_CREATE_EVENT}
+            
+            return await MapToGetOutputDtoAsync(entity);
+        }
+
+        /// <summary>
+        /// Updates an existing ${ENTITY_NAME} and publishes distributed event.
+        /// </summary>
+        [Authorize(${ENTITY_NAME}Management.Update)]
+        public override async Task<${ENTITY_NAME}Dto> UpdateAsync(${ID_TYPE} id, Update${ENTITY_NAME}Dto input)
+        {
+            await CheckUpdatePolicyAsync();
+
+            var entity = await GetEntityByIdAsync(id);
+
+            await MapToEntityAsync(input, entity);
+            await Repository.UpdateAsync(entity, autoSave: true);
+
+            await _cache.RemoveAsync($"{${ENTITY_NAME}Constants.CacheKeys.SingleKey}:{id}");
+            await _listCache.RemoveAsync(${ENTITY_NAME}Constants.CacheKeys.ListCacheKey);
+
+${PUBLISH_UPDATE_EVENT}
+            
+            return await MapToGetOutputDtoAsync(entity);
+        }
+
+        /// <summary>
+        /// Deletes a ${ENTITY_NAME} and clears cache.
+        /// </summary>
+        [Authorize(${ENTITY_NAME}Management.Delete)]
+        public override async Task DeleteAsync(${ID_TYPE} id)
+        {
+            await CheckDeletePolicyAsync();
+
+            await Repository.DeleteAsync(id);
+
+            await _cache.RemoveAsync($"{${ENTITY_NAME}Constants.CacheKeys.SingleKey}:{id}");
+            await _listCache.RemoveAsync(${ENTITY_NAME}Constants.CacheKeys.ListCacheKey);
+        }
+
+${APPLY_DEFAULT_SORTING}
+
+        /// <summary>
+        /// Creates filtered query with search support.
+        /// </summary>
+        protected override async Task<IQueryable<${ENTITY_NAME}>> CreateFilteredQueryAsync(SearchedPagedAndSortedResultRequestDto input)
+        {
+            var data = await base.CreateFilteredQueryAsync(input);
+            
+${SEARCH_FILTER_LOGIC}
+            
+            return data;
         }
     }
 }

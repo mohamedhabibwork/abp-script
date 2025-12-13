@@ -869,11 +869,15 @@ function New-EntityFromJson {
     $relationships = Get-RelationshipsFromJson $json
     
     # Generate all components
+    New-ConstantsFile $properties
+    New-PermissionsFile
+    New-EventFiles
     New-EntityFiles $properties $relationships
     New-DtoFiles $properties
     New-RepositoryFiles
     New-ServiceFiles
     New-ControllerFiles
+    New-LocalizationEntries
     
     # Check options
     if ($json.options.generateSeeder -eq $true) {
@@ -890,6 +894,13 @@ function New-EntityFromJson {
     
     # Collect generated files for tracking (build expected paths)
     $generatedFiles = @()
+    
+    # Constants, permissions, and events
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\Constants\$($script:EntityName)Constants.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\Permissions\$($script:ModuleName)Permissions.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\Permissions\$($script:ModuleName)PermissionDefinitionProvider.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\Events\$($script:EntityName)Eto.cs"
+    $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\Events\$($script:EntityName)EtoTypes.cs"
     
     # Entity files
     $generatedFiles += Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\$script:EntityName.cs"
@@ -1156,6 +1167,153 @@ function New-TestFiles {
     $templateFile = Join-Path $script:TemplatesDir "tests\unit-test-domain.template.cs"
     $outputFile = Join-Path $script:ProjectRoot "test\$script:Namespace.Domain.Tests\$script:ModuleName\$($script:EntityName)DomainTests.cs"
     Invoke-TemplateProcessing $templateFile $outputFile $vars
+}
+
+function New-ConstantsFile {
+    param([array]$Properties)
+    
+    Write-Step "Generating constants file..."
+    
+    # Generate validation constants from properties
+    $validationConstants = ""
+    foreach ($prop in $Properties) {
+        if ($prop.maxLength) {
+            $validationConstants += "            public const int $($prop.name)MaxLength = $($prop.maxLength);`n"
+        }
+        if ($prop.minLength) {
+            $validationConstants += "            public const int $($prop.name)MinLength = $($prop.minLength);`n"
+        }
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($validationConstants)) {
+        $validationConstants = "            // Add validation constants here"
+    }
+    
+    $vars = @{
+        NAMESPACE = $script:Namespace
+        MODULE_NAME = $script:ModuleName
+        ENTITY_NAME = $script:EntityName
+        VALIDATION_CONSTANTS = $validationConstants.TrimEnd()
+    }
+    
+    $templateFile = Join-Path $script:TemplatesDir "shared\entity-consts.template.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\Constants\$($script:EntityName)Constants.cs"
+    Invoke-TemplateProcessing $templateFile $outputFile $vars
+}
+
+function New-PermissionsFile {
+    Write-Step "Generating permissions file..."
+    
+    $vars = @{
+        NAMESPACE = $script:Namespace
+        MODULE_NAME = $script:ModuleName
+        ENTITY_NAME = $script:EntityName
+        ADDITIONAL_PERMISSION_CLASSES = ""
+    }
+    
+    $templateFile = Join-Path $script:TemplatesDir "permissions\permissions.template.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\Permissions\$($script:ModuleName)Permissions.cs"
+    
+    # Check if file exists
+    if (Test-Path $outputFile) {
+        Write-Info "Permissions file already exists, updating..."
+        # TODO: Implement merge logic to add new entity permissions
+    } else {
+        Invoke-TemplateProcessing $templateFile $outputFile $vars
+    }
+    
+    # Generate permission definition provider
+    $moduleNameLower = $script:ModuleName.Substring(0,1).ToLower() + $script:ModuleName.Substring(1)
+    $entityNameLower = $script:EntityName.Substring(0,1).ToLower() + $script:EntityName.Substring(1)
+    
+    $vars2 = @{
+        NAMESPACE = $script:Namespace
+        MODULE_NAME = $script:ModuleName
+        MODULE_NAME_LOWER = $moduleNameLower
+        ENTITY_NAME = $script:EntityName
+        ENTITY_NAME_LOWER = $entityNameLower
+        ADDITIONAL_PERMISSION_DEFINITIONS = ""
+    }
+    
+    $templateFile2 = Join-Path $script:TemplatesDir "permissions\permission-definition-provider.template.cs"
+    $outputFile2 = Join-Path $script:ProjectRoot "src\$script:Namespace.Application.Contracts\$script:ModuleName\Permissions\$($script:ModuleName)PermissionDefinitionProvider.cs"
+    
+    if (Test-Path $outputFile2) {
+        Write-Info "Permission definition provider already exists, updating..."
+        # TODO: Implement merge logic
+    } else {
+        Invoke-TemplateProcessing $templateFile2 $outputFile2 $vars2
+    }
+}
+
+function New-EventFiles {
+    Write-Step "Generating event files..."
+    
+    $vars = @{
+        NAMESPACE = $script:Namespace
+        MODULE_NAME = $script:ModuleName
+        ENTITY_NAME = $script:EntityName
+        ID_TYPE = $script:EntityIdType
+        PROPERTIES = ""
+        FOREIGN_KEY_NAMES = ""
+    }
+    
+    # Generate ETO
+    $templateFile = Join-Path $script:TemplatesDir "events\eto.template.cs"
+    $outputFile = Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\Events\$($script:EntityName)Eto.cs"
+    Invoke-TemplateProcessing $templateFile $outputFile $vars
+    
+    # Generate event types
+    $templateFile2 = Join-Path $script:TemplatesDir "events\event-types.template.cs"
+    $outputFile2 = Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\$script:ModuleName\Events\$($script:EntityName)EtoTypes.cs"
+    Invoke-TemplateProcessing $templateFile2 $outputFile2 $vars
+}
+
+function New-LocalizationEntries {
+    Write-Step "Generating localization entries..."
+    
+    # Create English localization
+    $localizationDir = Join-Path $script:ProjectRoot "src\$script:Namespace.Domain\Localization\$script:ModuleName"
+    $enFile = Join-Path $localizationDir "en.json"
+    
+    if (Test-Path $enFile) {
+        try {
+            $enContent = Get-Content $enFile -Raw | ConvertFrom-Json
+            
+            # Add entity-specific translations
+            if (-not $enContent.texts."Permission:$($script:EntityName)") {
+                $enContent.texts | Add-Member -NotePropertyName "Permission:$($script:EntityName)" -NotePropertyValue "$($script:EntityName) management" -Force
+                $enContent.texts | Add-Member -NotePropertyName "Permission:$($script:EntityName).Create" -NotePropertyValue "Create $($script:EntityName)" -Force
+                $enContent.texts | Add-Member -NotePropertyName "Permission:$($script:EntityName).Update" -NotePropertyValue "Update $($script:EntityName)" -Force
+                $enContent.texts | Add-Member -NotePropertyName "Permission:$($script:EntityName).Delete" -NotePropertyValue "Delete $($script:EntityName)" -Force
+                
+                $enContent | ConvertTo-Json -Depth 10 | Set-Content $enFile -Encoding UTF8
+                Write-Success "Updated English localization"
+            }
+        } catch {
+            Write-Warning-Custom "Failed to update English localization: $_"
+        }
+    }
+    
+    # Create Arabic localization
+    $arFile = Join-Path $localizationDir "ar.json"
+    if (Test-Path $arFile) {
+        try {
+            $arContent = Get-Content $arFile -Raw | ConvertFrom-Json
+            
+            if (-not $arContent.texts."Permission:$($script:EntityName)") {
+                $arContent.texts | Add-Member -NotePropertyName "Permission:$($script:EntityName)" -NotePropertyValue "إدارة $($script:EntityName)" -Force
+                $arContent.texts | Add-Member -NotePropertyName "Permission:$($script:EntityName).Create" -NotePropertyValue "إنشاء $($script:EntityName)" -Force
+                $arContent.texts | Add-Member -NotePropertyName "Permission:$($script:EntityName).Update" -NotePropertyValue "تحديث $($script:EntityName)" -Force
+                $arContent.texts | Add-Member -NotePropertyName "Permission:$($script:EntityName).Delete" -NotePropertyValue "حذف $($script:EntityName)" -Force
+                
+                $arContent | ConvertTo-Json -Depth 10 | Set-Content $arFile -Encoding UTF8
+                Write-Success "Updated Arabic localization"
+            }
+        } catch {
+            Write-Warning-Custom "Failed to update Arabic localization: $_"
+        }
+    }
 }
 
 ################################################################################
